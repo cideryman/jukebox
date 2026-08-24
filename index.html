@@ -55,6 +55,25 @@
 
           <p id="settingsFeedback" class="settings-feedback" role="status" aria-live="polite" hidden></p>
 
+          <section class="volume-panel" aria-labelledby="maxVolumeLabel">
+            <div class="volume-heading">
+              <label id="maxVolumeLabel" for="maxVolumeRange">최대 음량</label>
+              <output id="maxVolumeValue" for="maxVolumeRange">100%</output>
+            </div>
+            <input
+              id="maxVolumeRange"
+              type="range"
+              min="10"
+              max="100"
+              step="10"
+              value="100"
+              aria-describedby="maxVolumeHelp"
+            />
+            <p id="maxVolumeHelp">
+              앱 안에서 재생되는 소리의 상한입니다. 기기 옆면의 물리 음량 버튼은 별도로 작동합니다.
+            </p>
+          </section>
+
           <section class="storage-panel" aria-label="기기 저장소 상태">
             <div class="storage-panel-header">
               <div class="storage-stats">

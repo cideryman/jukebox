@@ -1,10 +1,13 @@
+import { normalizeMaxVolume } from "./volume.js";
+
 /**
  * JukeboxStorage - IndexedDB(메타데이터) + OPFS(바이너리) 영구 저장 계층
  */
 
 const DB_NAME = "jukebox_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "slots";
+const SETTINGS_STORE_NAME = "settings";
 const MEDIA_DIR_NAME = "media";
 const TOTAL_SLOTS = 9;
 
@@ -13,6 +16,7 @@ export class JukeboxStorage {
     dbName = DB_NAME,
     dbVersion = DB_VERSION,
     storeName = STORE_NAME,
+    settingsStoreName = SETTINGS_STORE_NAME,
     mediaDirName = MEDIA_DIR_NAME,
     totalSlots = TOTAL_SLOTS,
     requestPersistence = true,
@@ -20,6 +24,7 @@ export class JukeboxStorage {
     this.dbName = dbName;
     this.dbVersion = dbVersion;
     this.storeName = storeName;
+    this.settingsStoreName = settingsStoreName;
     this.mediaDirName = mediaDirName;
     this.totalSlots = totalSlots;
     this.shouldRequestPersistence = requestPersistence;
@@ -75,6 +80,9 @@ export class JukeboxStorage {
         const db = event.target.result;
         if (!db.objectStoreNames.contains(this.storeName)) {
           db.createObjectStore(this.storeName, { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains(this.settingsStoreName)) {
+          db.createObjectStore(this.settingsStoreName, { keyPath: "key" });
         }
       };
 
@@ -237,6 +245,29 @@ export class JukeboxStorage {
     });
   }
 
+  async _getSettingsFromDb() {
+    const db = await this._openDatabase();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.settingsStoreName, "readonly");
+      const request = tx.objectStore(this.settingsStoreName).get("app-settings");
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error("설정 조회 실패"));
+    });
+  }
+
+  async _putSettingsToDb(settings) {
+    const db = await this._openDatabase();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.settingsStoreName, "readwrite");
+      const request = tx.objectStore(this.settingsStoreName).put(settings);
+      const rejectTransaction = () => reject(tx.error || request.error || new Error("설정 저장 실패"));
+      request.onerror = rejectTransaction;
+      tx.onerror = rejectTransaction;
+      tx.onabort = rejectTransaction;
+      tx.oncomplete = () => resolve();
+    });
+  }
+
   /**
    * IndexedDB 메타데이터 삭제
    */
@@ -343,6 +374,7 @@ export class JukeboxStorage {
           imageFileName: null,
           imageMime: null,
           imagePath: null,
+          imageSource: null,
           label: "",
           updatedAt: 0,
         });
@@ -391,6 +423,7 @@ export class JukeboxStorage {
         imageFileName: meta.imageFileName || (imageFile ? imageFile.name : null),
         imageMime: meta.imageMime || (imageFile ? imageFile.type : null),
         imagePath: meta.imagePath || null,
+        imageSource: meta.imagePath ? meta.imageSource || "manual" : null,
         label: meta.label || "",
         updatedAt: meta.updatedAt || 0,
         error: Object.keys(errors).length > 0 ? errors : undefined,
@@ -404,7 +437,7 @@ export class JukeboxStorage {
    * 단일 슬롯 파일(음원 또는 사진) 저장/교체
    * 트랜잭션 안전성: 새 파일 OPFS 저장 -> IDB 메타 갱신 -> 이전 OPFS 파일 삭제
    */
-  async saveSlotFile(slotId, kind, file) {
+  async saveSlotFile(slotId, kind, file, { embeddedImageFile = null } = {}) {
     if (!file) throw new Error("저장할 파일이 없습니다.");
     if (kind !== "audio" && kind !== "image") throw new Error("잘못된 파일 종류입니다.");
 
@@ -423,11 +456,28 @@ export class JukeboxStorage {
         updatedAt: 0,
       };
 
+      const existingImageSource = existingMeta.imagePath ? existingMeta.imageSource || "manual" : null;
       const newOpfsFileName = this._generateSafeFileName(slotId, kind, file.name, file.type);
       const oldOpfsFileName = kind === "audio" ? existingMeta.audioPath : existingMeta.imagePath;
+      let newEmbeddedPath = null;
 
       // 1. 새 파일 OPFS에 저장
       await this._writeFileToOpfs(newOpfsFileName, file);
+
+      if (kind === "audio" && existingImageSource !== "manual" && embeddedImageFile) {
+        newEmbeddedPath = this._generateSafeFileName(
+          slotId,
+          "image",
+          embeddedImageFile.name,
+          embeddedImageFile.type,
+        );
+        try {
+          await this._writeFileToOpfs(newEmbeddedPath, embeddedImageFile);
+        } catch (error) {
+          await this._deleteFileFromOpfs(newOpfsFileName);
+          throw error;
+        }
+      }
 
       // 2. 메타데이터 생성 및 IDB 저장
       const now = Date.now();
@@ -441,10 +491,18 @@ export class JukeboxStorage {
         updatedMeta.audioMime = file.type;
         updatedMeta.audioPath = newOpfsFileName;
         updatedMeta.label = file.name.replace(/\.[^/.]+$/, "").trim() || `${slotId}번 음악`;
+
+        if (existingImageSource !== "manual") {
+          updatedMeta.imageFileName = embeddedImageFile ? embeddedImageFile.name : null;
+          updatedMeta.imageMime = embeddedImageFile ? embeddedImageFile.type : null;
+          updatedMeta.imagePath = newEmbeddedPath;
+          updatedMeta.imageSource = embeddedImageFile ? "embedded" : null;
+        }
       } else {
         updatedMeta.imageFileName = file.name;
         updatedMeta.imageMime = file.type;
         updatedMeta.imagePath = newOpfsFileName;
+        updatedMeta.imageSource = "manual";
       }
 
       try {
@@ -452,12 +510,21 @@ export class JukeboxStorage {
       } catch (dbErr) {
         // IDB 갱신 실패 시 새로 쓴 OPFS 파일 롤백
         await this._deleteFileFromOpfs(newOpfsFileName);
+        if (newEmbeddedPath) await this._deleteFileFromOpfs(newEmbeddedPath);
         throw dbErr;
       }
 
       // 3. IDB 갱신 성공 후 이전 파일 정리
       if (oldOpfsFileName && oldOpfsFileName !== newOpfsFileName) {
         await this._deleteFileFromOpfs(oldOpfsFileName);
+      }
+      if (
+        kind === "audio" &&
+        existingImageSource !== "manual" &&
+        existingMeta.imagePath &&
+        existingMeta.imagePath !== updatedMeta.imagePath
+      ) {
+        await this._deleteFileFromOpfs(existingMeta.imagePath);
       }
 
       // 4. 슬롯 상태 반환
@@ -480,6 +547,8 @@ export class JukeboxStorage {
       if (updatedMeta.imagePath) {
         if (kind === "image") {
           imageFile = file;
+        } else if (newEmbeddedPath && updatedMeta.imagePath === newEmbeddedPath) {
+          imageFile = embeddedImageFile;
         } else {
           imageFile = await this._readFileFromOpfs(
             updatedMeta.imagePath,
@@ -500,6 +569,7 @@ export class JukeboxStorage {
         imageFileName: updatedMeta.imageFileName,
         imageMime: updatedMeta.imageMime,
         imagePath: updatedMeta.imagePath,
+        imageSource: updatedMeta.imagePath ? updatedMeta.imageSource || "manual" : null,
         label: updatedMeta.label,
         updatedAt: updatedMeta.updatedAt,
       };
@@ -550,6 +620,7 @@ export class JukeboxStorage {
         imageFileName: imageFile.name,
         imageMime: imageFile.type,
         imagePath: newImagePath,
+        imageSource: "manual",
         label: audioFile.name.replace(/\.[^/.]+$/, "").trim() || `${slotId}번 음악`,
         updatedAt: now,
       };
@@ -580,6 +651,7 @@ export class JukeboxStorage {
         imageFileName: updatedMeta.imageFileName,
         imageMime: updatedMeta.imageMime,
         imagePath: updatedMeta.imagePath,
+        imageSource: "manual",
         label: updatedMeta.label,
         updatedAt: updatedMeta.updatedAt,
       };
@@ -607,6 +679,23 @@ export class JukeboxStorage {
         await this._deleteFileFromOpfs(existingMeta.imagePath);
       }
     });
+  }
+
+  async getSettings() {
+    await this.init();
+    const stored = await this._getSettingsFromDb();
+    return { maxVolume: normalizeMaxVolume(stored?.maxVolume) };
+  }
+
+  async saveSettings({ maxVolume }) {
+    await this.init();
+    const normalized = normalizeMaxVolume(maxVolume);
+    await this._putSettingsToDb({
+      key: "app-settings",
+      maxVolume: normalized,
+      updatedAt: Date.now(),
+    });
+    return { maxVolume: normalized };
   }
 
   /**

@@ -57,10 +57,12 @@
     <script type="module">
       import { JukeboxStorage } from "./storage.js";
       import { normalizeFileForKind } from "./file-types.js";
+      import { extractEmbeddedArtwork } from "./album-art.js";
+      import { applyVolumeLimit } from "./volume.js";
 
       const TEST_DB_NAME = "jukebox_test_db";
       const TEST_MEDIA_DIR_NAME = "media-test";
-      const EXPECTED_CACHE_NAME = "jukebox-shell-v7";
+      const EXPECTED_CACHE_NAME = "jukebox-shell-v8";
       const storage = new JukeboxStorage({
         dbName: TEST_DB_NAME,
         mediaDirName: TEST_MEDIA_DIR_NAME,
@@ -104,6 +106,32 @@
           0x42, 0x60, 0x82
         ]);
         return new Blob([png], { type: "image/png" });
+      }
+
+      async function createTestMp3WithArtwork(name = "artwork.mp3") {
+        const imageBytes = new Uint8Array(await createTestPngBlob().arrayBuffer());
+        const mime = new TextEncoder().encode("image/png");
+        const payload = new Uint8Array(1 + mime.length + 1 + 1 + 1 + imageBytes.length);
+        let offset = 1;
+        payload.set(mime, offset);
+        offset += mime.length + 1;
+        payload[offset] = 3;
+        offset += 2;
+        payload.set(imageBytes, offset);
+
+        const frame = new Uint8Array(10 + payload.length);
+        frame.set(new TextEncoder().encode("APIC"), 0);
+        const view = new DataView(frame.buffer);
+        view.setUint32(4, payload.length);
+        frame.set(payload, 10);
+
+        const header = new Uint8Array(10);
+        header.set([0x49, 0x44, 0x33, 0x03, 0x00, 0x00], 0);
+        const size = frame.length;
+        header.set([(size >> 21) & 0x7f, (size >> 14) & 0x7f, (size >> 7) & 0x7f, size & 0x7f], 6);
+        return new File([header, frame, new Uint8Array([0xff, 0xfb, 0x90, 0x64])], name, {
+          type: "audio/mpeg",
+        });
       }
 
       async function runTest(name, fn) {
@@ -353,7 +381,7 @@
           assert(keys.includes(EXPECTED_CACHE_NAME), `${EXPECTED_CACHE_NAME} 캐시가 있어야 함`);
 
           const cache = await caches.open(EXPECTED_CACHE_NAME);
-          for (const path of ["./index.html", "./app.js", "./file-types.js", "./storage.js", "./styles.css"]) {
+          for (const path of ["./index.html", "./app.js", "./album-art.js", "./file-types.js", "./storage.js", "./styles.css", "./volume.js"]) {
             const response = await cache.match(path);
             assert(response, `${path}가 앱 셸 캐시에 있어야 함`);
           }
@@ -382,6 +410,120 @@
           const normalizedSamsungMp3 = await normalizeFileForKind(samsungMp3, "audio");
           assert(normalizedSamsungMp3 instanceof File, "확장자와 MIME이 없는 ID3 MP3도 인식해야 함");
           assert(normalizedSamsungMp3.type === "audio/mpeg", "파일 내용으로 MP3 MIME을 복원해야 함");
+        });
+
+        // 12. ID3 APIC 앨범아트 추출
+        await runTest("12. MP3 ID3 APIC 내장 앨범아트 추출", async () => {
+          const mp3 = await createTestMp3WithArtwork();
+          const artwork = await extractEmbeddedArtwork(mp3);
+          assert(artwork instanceof File, "APIC 이미지를 File로 추출해야 함");
+          assert(artwork.type === "image/png", "APIC 이미지 MIME을 유지해야 함");
+          assert(artwork.size > 0, "추출한 앨범아트 데이터가 있어야 함");
+        });
+
+        // 13. 수동 이미지 우선 및 내장 이미지 교체 규칙
+        await runTest("13. 수동 이미지 우선과 내장 앨범아트 교체 규칙", async () => {
+          const firstMp3 = await createTestMp3WithArtwork("first.mp3");
+          const firstArt = await extractEmbeddedArtwork(firstMp3);
+          const embedded = await storage.saveSlotFile(5, "audio", firstMp3, { embeddedImageFile: firstArt });
+          assert(embedded.imageSource === "embedded", "첫 내장 이미지를 embedded로 저장해야 함");
+          assert(embedded.imageFile instanceof File, "내장 이미지 파일을 함께 복원해야 함");
+
+          const manualImage = new File([createTestPngBlob()], "chosen.png", { type: "image/png" });
+          const manual = await storage.saveSlotFile(5, "image", manualImage);
+          const manualPath = manual.imagePath;
+          assert(manual.imageSource === "manual", "직접 선택 이미지는 manual이어야 함");
+
+          const replacementMp3 = await createTestMp3WithArtwork("replacement.mp3");
+          const replacementArt = await extractEmbeddedArtwork(replacementMp3);
+          const preserved = await storage.saveSlotFile(5, "audio", replacementMp3, {
+            embeddedImageFile: replacementArt,
+          });
+          assert(preserved.imageSource === "manual", "음원 교체 후에도 수동 이미지를 유지해야 함");
+          assert(preserved.imagePath === manualPath, "수동 이미지 OPFS 경로를 바꾸지 않아야 함");
+
+          const embeddedSlot = await storage.saveSlotFile(6, "audio", firstMp3, { embeddedImageFile: firstArt });
+          const oldEmbeddedPath = embeddedSlot.imagePath;
+          const replacedEmbedded = await storage.saveSlotFile(6, "audio", replacementMp3, {
+            embeddedImageFile: replacementArt,
+          });
+          assert(replacedEmbedded.imageSource === "embedded", "새 음원의 내장 이미지로 교체해야 함");
+          assert(replacedEmbedded.imagePath !== oldEmbeddedPath, "내장 이미지 경로가 새로 생성되어야 함");
+
+          const noArtwork = new File([createTestWavBlob()], "no-art.wav", { type: "audio/wav" });
+          const clearedEmbedded = await storage.saveSlotFile(6, "audio", noArtwork);
+          assert(clearedEmbedded.imageFile === null, "새 음원에 앨범아트가 없으면 이전 이미지를 제거해야 함");
+          assert(clearedEmbedded.imageSource === null, "이미지 출처도 null로 정리해야 함");
+        });
+
+        // 14. 최대 음량 영구 설정과 슬롯 데이터 보존
+        await runTest("14. 최대 음량 저장·복원 및 손상값 복구", async () => {
+          const saved = await storage.saveSettings({ maxVolume: 50 });
+          assert(saved.maxVolume === 50, "50% 설정을 저장해야 함");
+          const restored = await storage.getSettings();
+          assert(restored.maxVolume === 50, "저장한 50% 설정을 복원해야 함");
+
+          const testAudio = document.createElement("audio");
+          applyVolumeLimit(testAudio, restored.maxVolume);
+          assert(testAudio.volume === 0.5, "50% 설정을 audio.volume 0.5로 적용해야 함");
+          applyVolumeLimit(testAudio, 30);
+          assert(testAudio.volume === 0.3, "재생 중 변경값도 즉시 audio.volume에 적용해야 함");
+
+          const slotsAfterSettings = await storage.listSlots();
+          assert(slotsAfterSettings.find((slot) => slot.id === 5).audioFile instanceof File, "설정 저장 후 기존 슬롯이 유지되어야 함");
+
+          await storage._putSettingsToDb({ key: "app-settings", maxVolume: 55 });
+          const repaired = await storage.getSettings();
+          assert(repaired.maxVolume === 100, "잘못된 단계 값은 기본 100%로 복구해야 함");
+        });
+
+        // 15. DB v1 -> v2 마이그레이션 시 슬롯 보존
+        await runTest("15. DB 버전 업그레이드 후 기존 슬롯 보존", async () => {
+          const legacyDbName = `${TEST_DB_NAME}_legacy`;
+          const legacyMediaDir = `${TEST_MEDIA_DIR_NAME}-legacy`;
+          await new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(legacyDbName);
+            request.onsuccess = resolve;
+            request.onerror = () => reject(request.error);
+          });
+
+          const legacyDb = await new Promise((resolve, reject) => {
+            const request = indexedDB.open(legacyDbName, 1);
+            request.onupgradeneeded = () => request.result.createObjectStore("slots", { keyPath: "id" });
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          await new Promise((resolve, reject) => {
+            const tx = legacyDb.transaction("slots", "readwrite");
+            tx.objectStore("slots").put({ id: 9, label: "기존 음악", updatedAt: 1 });
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+          legacyDb.close();
+
+          const migratedStorage = new JukeboxStorage({
+            dbName: legacyDbName,
+            mediaDirName: legacyMediaDir,
+            requestPersistence: false,
+          });
+          await migratedStorage.init();
+          assert(migratedStorage.db.version === 2, "DB가 버전 2로 업그레이드되어야 함");
+          assert(migratedStorage.db.objectStoreNames.contains("settings"), "settings 스토어가 추가되어야 함");
+          const legacyMeta = await migratedStorage._getMetaFromDb(9);
+          assert(legacyMeta?.label === "기존 음악", "버전 1의 슬롯 데이터가 유지되어야 함");
+          await migratedStorage.saveSettings({ maxVolume: 40 });
+          assert((await migratedStorage._getMetaFromDb(9))?.label === "기존 음악", "설정 저장 후에도 기존 슬롯이 유지되어야 함");
+
+          migratedStorage.db.close();
+          await new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(legacyDbName);
+            request.onsuccess = resolve;
+            request.onerror = () => reject(request.error);
+          });
+          const root = await navigator.storage.getDirectory();
+          await root.removeEntry(legacyMediaDir, { recursive: true }).catch((error) => {
+            if (error.name !== "NotFoundError") throw error;
+          });
         });
 
         // 결과 렌더링

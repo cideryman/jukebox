@@ -312,6 +312,48 @@ button {
   cursor: wait;
 }
 
+.volume-panel {
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--jukebox-line);
+  border-radius: 18px;
+  background: var(--jukebox-panel-raised);
+}
+
+.volume-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.volume-heading label,
+.volume-heading output {
+  font-weight: 800;
+}
+
+.volume-heading output {
+  min-width: 54px;
+  color: var(--jukebox-accent);
+  text-align: right;
+}
+
+#maxVolumeRange {
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  accent-color: var(--jukebox-accent);
+  cursor: pointer;
+}
+
+.volume-panel p {
+  margin: 8px 0 0;
+  color: var(--jukebox-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .storage-panel {
   margin-bottom: 22px;
   padding: 16px 18px;

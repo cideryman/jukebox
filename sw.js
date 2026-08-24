@@ -1,11 +1,13 @@
-const CACHE_NAME = "jukebox-shell-v7";
+const CACHE_NAME = "jukebox-shell-v8";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./album-art.js",
   "./file-types.js",
   "./storage.js",
+  "./volume.js",
   "./manifest.webmanifest",
   "./assets/icon.svg",
 ];

@@ -1,5 +1,7 @@
 import { storage } from "./storage.js";
 import { normalizeFileForKind } from "./file-types.js";
+import { extractEmbeddedArtwork } from "./album-art.js";
+import { applyVolumeLimit } from "./volume.js";
 
 const SLOT_COUNT = 9;
 const HOLD_DURATION_MS = 2000;
@@ -15,6 +17,7 @@ const slots = Array.from({ length: SLOT_COUNT }, (_, index) => ({
   imageFile: null,
   imageFileName: "",
   imageUrl: null,
+  imageSource: null,
   label: "",
   hasError: false,
   hasPersistedData: false,
@@ -39,11 +42,16 @@ const audio = document.querySelector("#audioPlayer");
 const toast = document.querySelector("#toast");
 const settingsFeedback = document.querySelector("#settingsFeedback");
 const liveRegion = document.querySelector("#liveRegion");
+const maxVolumeRange = document.querySelector("#maxVolumeRange");
+const maxVolumeValue = document.querySelector("#maxVolumeValue");
 
 let holdTimer = null;
 let holdOpened = false;
 let toastTimer = null;
 let errorTimer = null;
+let maxVolume = 100;
+let persistedMaxVolume = 100;
+let settingsSaving = false;
 
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return "0 B";
@@ -63,6 +71,31 @@ function getSlot(slotId) {
 
 function getFileLabel(fileName) {
   return fileName.replace(/\.[^/.]+$/, "").trim() || "음악";
+}
+
+function applyMaxVolume(value) {
+  maxVolume = applyVolumeLimit(audio, value);
+  maxVolumeRange.value = String(maxVolume);
+  maxVolumeValue.value = `${maxVolume}%`;
+  maxVolumeValue.textContent = `${maxVolume}%`;
+}
+
+async function persistMaxVolume() {
+  settingsSaving = true;
+  renderSettings();
+  try {
+    const saved = await storage.saveSettings({ maxVolume });
+    persistedMaxVolume = saved.maxVolume;
+    applyMaxVolume(saved.maxVolume);
+    announce(`최대 음량을 ${saved.maxVolume}%로 저장했습니다.`);
+  } catch (error) {
+    console.error("최대 음량 저장 실패:", error);
+    applyMaxVolume(persistedMaxVolume);
+    showToast("최대 음량을 저장하지 못했습니다. 다시 시도해 주세요.");
+  } finally {
+    settingsSaving = false;
+    renderSettings();
+  }
 }
 
 function renderJukebox() {
@@ -120,10 +153,14 @@ function renderJukebox() {
 
 function renderSettings() {
   const fragment = document.createDocumentFragment();
-  const isAnySlotSaving = savingSlots.size > 0;
+  const isAnySlotSaving = savingSlots.size > 0 || settingsSaving;
 
   closeSettingsButton.disabled = isAnySlotSaving;
   closeSettingsButton.textContent = isAnySlotSaving ? "저장 중…" : "확인";
+  maxVolumeRange.value = String(maxVolume);
+  maxVolumeRange.disabled = settingsSaving;
+  maxVolumeValue.value = `${maxVolume}%`;
+  maxVolumeValue.textContent = `${maxVolume}%`;
 
   slots.forEach((slot) => {
     const ready = isSlotReady(slot);
@@ -165,6 +202,8 @@ function renderSettings() {
     } else if (slot.hasError) {
       statusText.className = "is-error";
       statusText.textContent = "파일 손상";
+    } else if (slot.audioFile && !slot.imageFile) {
+      statusText.textContent = "사진 필요";
     } else {
       statusText.textContent = "등록 필요";
     }
@@ -174,7 +213,8 @@ function renderSettings() {
     const summary = document.createElement("p");
     summary.className = "file-summary";
     const audioName = slot.audioFileName || slot.audioFile?.name || "음악 없음";
-    const imageName = slot.imageFileName || slot.imageFile?.name || "사진 없음";
+    const imageName =
+      slot.imageSource === "embedded" ? "내장 앨범아트" : slot.imageFileName || slot.imageFile?.name || "사진 없음";
     summary.textContent = `${audioName} · ${imageName}`;
 
     const actions = document.createElement("div");
@@ -263,6 +303,7 @@ async function playSlot(slotId, { resume = false } = {}) {
   if (!slot || !isSlotReady(slot)) return;
 
   const requestId = ++playback.requestId;
+  applyVolumeLimit(audio, maxVolume);
 
   if (!resume) {
     audio.pause();
@@ -359,6 +400,7 @@ async function registerFile(slotId, kind, file) {
     return;
   }
   file = normalizedFile;
+  const embeddedImageFile = kind === "audio" ? await extractEmbeddedArtwork(file) : null;
 
   // 파일 등록 시작 시 재생 중이면 정지
   if (playback.activeSlotId === slot.id) stopPlayback({ announceStop: false });
@@ -369,39 +411,36 @@ async function registerFile(slotId, kind, file) {
 
   try {
     let updated;
-    let savedPersistently = true;
     try {
       // 영구 저장소 기록 시도
-      updated = await storage.saveSlotFile(slotId, kind, file);
+      updated = await storage.saveSlotFile(slotId, kind, file, { embeddedImageFile });
     } catch (storageError) {
-      savedPersistently = false;
-      console.warn("영구 저장 실패, 인메모리 대체를 시도합니다:", storageError);
-      // 저장 공간 부족 등 OPFS 접근 불가 시, 인메모리 동작 보장 (사용자 경험 계약)
-      updated = {
-        audioFile: kind === "audio" ? file : slot.audioFile,
-        audioFileName: kind === "audio" ? file.name : slot.audioFileName,
-        imageFile: kind === "image" ? file : slot.imageFile,
-        imageFileName: kind === "image" ? file.name : slot.imageFileName,
-        label: kind === "audio" ? getFileLabel(file.name) : slot.label,
-      };
-      showToast("저장 공간 문제로 임시 등록되었습니다. 앱 종료 시 초기화됩니다.");
+      console.warn("영구 저장 실패, 기존 슬롯을 유지합니다:", storageError);
+      showToast("파일을 저장하지 못했습니다. 기존 등록은 그대로 유지됩니다.");
+      return;
     }
 
     if (kind === "audio") {
       if (slot.audioUrl) URL.revokeObjectURL(slot.audioUrl);
+      if (slot.imageUrl) URL.revokeObjectURL(slot.imageUrl);
       slot.audioFile = updated.audioFile;
       slot.audioFileName = updated.audioFileName;
       slot.audioUrl = updated.audioFile ? URL.createObjectURL(updated.audioFile) : null;
+      slot.imageFile = updated.imageFile;
+      slot.imageFileName = updated.imageFileName || "";
+      slot.imageUrl = updated.imageFile ? URL.createObjectURL(updated.imageFile) : null;
+      slot.imageSource = updated.imageSource || null;
       slot.label = updated.label;
     } else {
       if (slot.imageUrl) URL.revokeObjectURL(slot.imageUrl);
       slot.imageFile = updated.imageFile;
       slot.imageFileName = updated.imageFileName;
       slot.imageUrl = updated.imageFile ? URL.createObjectURL(updated.imageFile) : null;
+      slot.imageSource = updated.imageSource || "manual";
     }
 
     slot.hasError = false;
-    if (savedPersistently) slot.hasPersistedData = true;
+    slot.hasPersistedData = true;
     announce(`${slot.id}번 칸에 ${kind === "audio" ? "음악" : "사진"}을 등록했습니다.`);
   } catch (error) {
     console.error("파일 등록 처리 실패:", error);
@@ -439,6 +478,7 @@ async function clearSlot(slotId) {
       imageFile: null,
       imageFileName: "",
       imageUrl: null,
+      imageSource: null,
       label: "",
       hasError: false,
       hasPersistedData: false,
@@ -526,7 +566,7 @@ function openSettings() {
 }
 
 function closeSettings() {
-  if (savingSlots.size > 0) {
+  if (savingSlots.size > 0 || settingsSaving) {
     showToast("파일 저장이 끝난 뒤 확인을 눌러 주세요.");
     return;
   }
@@ -570,7 +610,9 @@ function revokeAllObjectUrls() {
 async function loadPersistedSlots() {
   try {
     await storage.init();
-    const persistedList = await storage.listSlots();
+    const [persistedList, persistedSettings] = await Promise.all([storage.listSlots(), storage.getSettings()]);
+    persistedMaxVolume = persistedSettings.maxVolume;
+    applyMaxVolume(persistedSettings.maxVolume);
 
     // 복원에 성공한 경우에만 기존 URL을 폐기해 실패 시 현재 세션을 보존한다.
     revokeAllObjectUrls();
@@ -586,6 +628,7 @@ async function loadPersistedSlots() {
       slot.imageFile = persisted.imageFile;
       slot.imageFileName = persisted.imageFileName || (persisted.imageFile ? persisted.imageFile.name : "");
       slot.imageUrl = persisted.imageFile ? URL.createObjectURL(persisted.imageFile) : null;
+      slot.imageSource = persisted.imageSource || null;
 
       slot.label = persisted.label || (slot.audioFileName ? getFileLabel(slot.audioFileName) : "");
       slot.hasError = Boolean(persisted.error);
@@ -619,6 +662,9 @@ slotEditors.addEventListener("click", (event) => {
   if (!button) return;
   clearSlot(Number(button.dataset.slotId));
 });
+
+maxVolumeRange.addEventListener("input", () => applyMaxVolume(maxVolumeRange.value));
+maxVolumeRange.addEventListener("change", persistMaxVolume);
 
 settingsTrigger.addEventListener("pointerdown", startSettingsHold);
 settingsTrigger.addEventListener("pointerup", cancelSettingsHold);
