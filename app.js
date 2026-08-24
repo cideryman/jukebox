@@ -799,6 +799,11 @@ function setupMediaSession() {
 function startSettingsHold(event) {
   if (event.type === "pointerdown" && event.button !== 0) return;
   event.preventDefault();
+  if (event.type === "pointerdown") {
+    try {
+      settingsTrigger.setPointerCapture(event.pointerId);
+    } catch {}
+  }
   cancelSettingsHold();
   holdOpened = false;
   settingsTrigger.classList.add("is-arming");
@@ -810,10 +815,15 @@ function startSettingsHold(event) {
   }, HOLD_DURATION_MS);
 }
 
-function cancelSettingsHold() {
+function cancelSettingsHold(event) {
   window.clearTimeout(holdTimer);
   holdTimer = null;
   settingsTrigger.classList.remove("is-arming");
+  if (event?.pointerId !== undefined && settingsTrigger.hasPointerCapture?.(event.pointerId)) {
+    try {
+      settingsTrigger.releasePointerCapture(event.pointerId);
+    } catch {}
+  }
 }
 
 function openSettings() {
@@ -996,7 +1006,8 @@ clearAllStatsButton.addEventListener("click", clearAllStats);
 settingsTrigger.addEventListener("pointerdown", startSettingsHold);
 settingsTrigger.addEventListener("pointerup", cancelSettingsHold);
 settingsTrigger.addEventListener("pointercancel", cancelSettingsHold);
-settingsTrigger.addEventListener("pointerleave", cancelSettingsHold);
+settingsTrigger.addEventListener("contextmenu", (event) => event.preventDefault());
+settingsTrigger.addEventListener("dragstart", (event) => event.preventDefault());
 settingsTrigger.addEventListener("click", (event) => {
   event.preventDefault();
   if (!holdOpened) showToast("보호자 설정은 톱니바퀴를 2초 동안 눌러 여세요.");
