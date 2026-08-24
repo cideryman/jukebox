@@ -1,15 +1,20 @@
-const CACHE_NAME = "jukebox-shell-v8";
+const CACHE_NAME = "jukebox-shell-v13";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./album-art.js",
+  "./backup.js",
   "./file-types.js",
+  "./interaction.js",
   "./storage.js",
   "./volume.js",
   "./manifest.webmanifest",
   "./assets/icon.svg",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png",
+  "./assets/apple-touch-icon.png",
 ];
 
 self.addEventListener("install", (event) => {

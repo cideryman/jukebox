@@ -5,11 +5,37 @@ import { normalizeMaxVolume } from "./volume.js";
  */
 
 const DB_NAME = "jukebox_db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = "slots";
 const SETTINGS_STORE_NAME = "settings";
+const STATS_STORE_NAME = "stats";
 const MEDIA_DIR_NAME = "media";
 const TOTAL_SLOTS = 9;
+
+function createTrackId() {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `track-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function safeCounter(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function normalizeStatsRecord(record, fallbackSlotId = 0) {
+  return {
+    trackId: String(record?.trackId || ""),
+    slotId: Number.isInteger(Number(record?.slotId)) ? Number(record.slotId) : fallbackSlotId,
+    selectionCount: safeCounter(record?.selectionCount),
+    completedCount: safeCounter(record?.completedCount),
+    listenedMs: safeCounter(record?.listenedMs),
+    lastPlayedAt: Number.isFinite(Number(record?.lastPlayedAt)) && Number(record.lastPlayedAt) > 0
+      ? Number(record.lastPlayedAt)
+      : 0,
+    updatedAt: Date.now(),
+  };
+}
 
 export class JukeboxStorage {
   constructor({
@@ -17,6 +43,7 @@ export class JukeboxStorage {
     dbVersion = DB_VERSION,
     storeName = STORE_NAME,
     settingsStoreName = SETTINGS_STORE_NAME,
+    statsStoreName = STATS_STORE_NAME,
     mediaDirName = MEDIA_DIR_NAME,
     totalSlots = TOTAL_SLOTS,
     requestPersistence = true,
@@ -25,6 +52,7 @@ export class JukeboxStorage {
     this.dbVersion = dbVersion;
     this.storeName = storeName;
     this.settingsStoreName = settingsStoreName;
+    this.statsStoreName = statsStoreName;
     this.mediaDirName = mediaDirName;
     this.totalSlots = totalSlots;
     this.shouldRequestPersistence = requestPersistence;
@@ -33,6 +61,7 @@ export class JukeboxStorage {
     this.initialized = false;
     this.initPromise = null;
     this.slotQueues = new Map(); // 슬롯별 직렬화 큐 (동시성 안전)
+    this.statsQueue = Promise.resolve();
   }
 
   /**
@@ -83,6 +112,9 @@ export class JukeboxStorage {
         }
         if (!db.objectStoreNames.contains(this.settingsStoreName)) {
           db.createObjectStore(this.settingsStoreName, { keyPath: "key" });
+        }
+        if (!db.objectStoreNames.contains(this.statsStoreName)) {
+          db.createObjectStore(this.statsStoreName, { keyPath: "trackId" });
         }
       };
 
@@ -245,6 +277,12 @@ export class JukeboxStorage {
     });
   }
 
+  async _enqueueStatsOperation(operation) {
+    const next = this.statsQueue.catch(() => {}).then(operation);
+    this.statsQueue = next.catch(() => {});
+    return next;
+  }
+
   async _getSettingsFromDb() {
     const db = await this._openDatabase();
     return new Promise((resolve, reject) => {
@@ -323,6 +361,15 @@ export class JukeboxStorage {
     }
   }
 
+  async _migrateTrackIds() {
+    const metas = await this._getAllMetaFromDb();
+    for (const meta of metas) {
+      if (meta.audioPath && !meta.trackId) {
+        await this._putMetaToDb({ ...meta, trackId: createTrackId() });
+      }
+    }
+  }
+
   /**
    * 초기화 (DB 및 OPFS 연결, 영구 저장 요청, 고아 파일 정리)
    */
@@ -332,6 +379,7 @@ export class JukeboxStorage {
       this.initPromise = (async () => {
         await this._openDatabase();
         await this._getMediaDir();
+        await this._migrateTrackIds();
 
         if (this.shouldRequestPersistence && navigator.storage && navigator.storage.persist) {
           try {
@@ -375,6 +423,7 @@ export class JukeboxStorage {
           imageMime: null,
           imagePath: null,
           imageSource: null,
+          trackId: null,
           label: "",
           updatedAt: 0,
         });
@@ -424,6 +473,7 @@ export class JukeboxStorage {
         imageMime: meta.imageMime || (imageFile ? imageFile.type : null),
         imagePath: meta.imagePath || null,
         imageSource: meta.imagePath ? meta.imageSource || "manual" : null,
+        trackId: meta.audioPath ? meta.trackId || null : null,
         label: meta.label || "",
         updatedAt: meta.updatedAt || 0,
         error: Object.keys(errors).length > 0 ? errors : undefined,
@@ -491,6 +541,7 @@ export class JukeboxStorage {
         updatedMeta.audioMime = file.type;
         updatedMeta.audioPath = newOpfsFileName;
         updatedMeta.label = file.name.replace(/\.[^/.]+$/, "").trim() || `${slotId}번 음악`;
+        updatedMeta.trackId = createTrackId();
 
         if (existingImageSource !== "manual") {
           updatedMeta.imageFileName = embeddedImageFile ? embeddedImageFile.name : null;
@@ -525,6 +576,11 @@ export class JukeboxStorage {
         existingMeta.imagePath !== updatedMeta.imagePath
       ) {
         await this._deleteFileFromOpfs(existingMeta.imagePath);
+      }
+      if (kind === "audio" && existingMeta.trackId && existingMeta.trackId !== updatedMeta.trackId) {
+        await this.clearPlaybackStats(existingMeta.trackId).catch((error) => {
+          console.warn("이전 음원 통계 정리 실패:", error);
+        });
       }
 
       // 4. 슬롯 상태 반환
@@ -570,6 +626,7 @@ export class JukeboxStorage {
         imageMime: updatedMeta.imageMime,
         imagePath: updatedMeta.imagePath,
         imageSource: updatedMeta.imagePath ? updatedMeta.imageSource || "manual" : null,
+        trackId: updatedMeta.trackId || null,
         label: updatedMeta.label,
         updatedAt: updatedMeta.updatedAt,
       };
@@ -621,6 +678,7 @@ export class JukeboxStorage {
         imageMime: imageFile.type,
         imagePath: newImagePath,
         imageSource: "manual",
+        trackId: createTrackId(),
         label: audioFile.name.replace(/\.[^/.]+$/, "").trim() || `${slotId}번 음악`,
         updatedAt: now,
       };
@@ -640,6 +698,11 @@ export class JukeboxStorage {
       if (oldImagePath && oldImagePath !== newImagePath) {
         await this._deleteFileFromOpfs(oldImagePath);
       }
+      if (existingMeta.trackId && existingMeta.trackId !== updatedMeta.trackId) {
+        await this.clearPlaybackStats(existingMeta.trackId).catch((error) => {
+          console.warn("이전 음원 통계 정리 실패:", error);
+        });
+      }
 
       return {
         id: slotId,
@@ -652,6 +715,7 @@ export class JukeboxStorage {
         imageMime: updatedMeta.imageMime,
         imagePath: updatedMeta.imagePath,
         imageSource: "manual",
+        trackId: updatedMeta.trackId,
         label: updatedMeta.label,
         updatedAt: updatedMeta.updatedAt,
       };
@@ -678,7 +742,206 @@ export class JukeboxStorage {
       if (existingMeta.imagePath) {
         await this._deleteFileFromOpfs(existingMeta.imagePath);
       }
+      if (existingMeta.trackId) {
+        await this.clearPlaybackStats(existingMeta.trackId).catch((error) => {
+          console.warn("삭제한 음원 통계 정리 실패:", error);
+        });
+      }
     });
+  }
+
+  async getAllPlaybackStats() {
+    await this.init();
+    const db = await this._openDatabase();
+    const records = await new Promise((resolve, reject) => {
+      const tx = db.transaction(this.statsStoreName, "readonly");
+      const request = tx.objectStore(this.statsStoreName).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error || new Error("재생 통계 조회 실패"));
+    });
+    return records
+      .filter((record) => typeof record?.trackId === "string" && record.trackId)
+      .map((record) => normalizeStatsRecord(record));
+  }
+
+  async _updatePlaybackStats(trackId, slotId, delta) {
+    if (!trackId) throw new Error("통계를 기록할 음원 ID가 없습니다.");
+    await this.init();
+    return this._enqueueStatsOperation(async () => {
+      const db = await this._openDatabase();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(this.statsStoreName, "readwrite");
+        const store = tx.objectStore(this.statsStoreName);
+        const request = store.get(String(trackId));
+        let updated;
+        request.onsuccess = () => {
+          const current = normalizeStatsRecord(request.result || { trackId, slotId }, Number(slotId));
+          updated = {
+            ...current,
+            trackId: String(trackId),
+            slotId: Number(slotId),
+            selectionCount: Math.min(Number.MAX_SAFE_INTEGER, current.selectionCount + safeCounter(delta.selectionCount)),
+            completedCount: Math.min(Number.MAX_SAFE_INTEGER, current.completedCount + safeCounter(delta.completedCount)),
+            listenedMs: Math.min(Number.MAX_SAFE_INTEGER, current.listenedMs + safeCounter(delta.listenedMs)),
+            lastPlayedAt: delta.lastPlayedAt ? Number(delta.lastPlayedAt) : current.lastPlayedAt,
+            updatedAt: Date.now(),
+          };
+          store.put(updated);
+        };
+        const rejectTransaction = () => reject(tx.error || request.error || new Error("재생 통계 저장 실패"));
+        request.onerror = rejectTransaction;
+        tx.onerror = rejectTransaction;
+        tx.onabort = rejectTransaction;
+        tx.oncomplete = () => resolve(updated);
+      });
+    });
+  }
+
+  async recordPlaybackStart(trackId, slotId, playedAt = Date.now()) {
+    return this._updatePlaybackStats(trackId, slotId, { selectionCount: 1, lastPlayedAt: playedAt });
+  }
+
+  async recordListening(trackId, slotId, listenedMs, { completed = false } = {}) {
+    return this._updatePlaybackStats(trackId, slotId, {
+      listenedMs: Math.max(0, Math.round(Number(listenedMs) || 0)),
+      completedCount: completed ? 1 : 0,
+    });
+  }
+
+  async clearPlaybackStats(trackId = null) {
+    await this.init();
+    return this._enqueueStatsOperation(async () => {
+      const db = await this._openDatabase();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.statsStoreName, "readwrite");
+        const store = tx.objectStore(this.statsStoreName);
+        if (trackId) store.delete(String(trackId));
+        else store.clear();
+        const rejectTransaction = () => reject(tx.error || new Error("재생 통계 초기화 실패"));
+        tx.onerror = rejectTransaction;
+        tx.onabort = rejectTransaction;
+        tx.oncomplete = resolve;
+      });
+    });
+  }
+
+  async createBackupSnapshot() {
+    await this.statsQueue.catch(() => {});
+    const [slots, settings, stats] = await Promise.all([
+      this.listSlots(),
+      this.getSettings(),
+      this.getAllPlaybackStats(),
+    ]);
+    return { slots, settings, stats };
+  }
+
+  async restoreBackupSnapshot({ slots, settings, stats = [] }) {
+    await this.init();
+    await Promise.all(Array.from(this.slotQueues.values(), (operation) => operation.catch(() => {})));
+    await this.statsQueue.catch(() => {});
+
+    if (!Array.isArray(slots) || slots.length > this.totalSlots) {
+      throw new Error("복원할 슬롯 정보가 올바르지 않습니다.");
+    }
+
+    const oldMeta = await this._getAllMetaFromDb();
+    const stagedPaths = [];
+    const restoredMeta = [];
+    const restoredSlotIds = new Set();
+    const restoredTrackIds = new Map();
+
+    try {
+      for (const slot of slots) {
+        if (
+          !Number.isInteger(slot.id) ||
+          slot.id < 1 ||
+          slot.id > this.totalSlots ||
+          restoredSlotIds.has(slot.id) ||
+          (!slot.audioFile && !slot.imageFile)
+        ) {
+          throw new Error("복원할 슬롯 번호가 올바르지 않습니다.");
+        }
+        restoredSlotIds.add(slot.id);
+        const meta = {
+          id: slot.id,
+          audioFileName: null,
+          audioMime: null,
+          audioPath: null,
+          imageFileName: null,
+          imageMime: null,
+          imagePath: null,
+          imageSource: null,
+          trackId: null,
+          label: String(slot.label || "").slice(0, 240),
+          updatedAt: Date.now(),
+        };
+
+        if (slot.audioFile) {
+          const requestedTrackId = typeof slot.trackId === "string" && slot.trackId.length <= 120 ? slot.trackId : null;
+          meta.trackId = requestedTrackId || createTrackId();
+          if (restoredTrackIds.has(meta.trackId)) throw new Error("복원 백업에 중복된 음원 ID가 있습니다.");
+          restoredTrackIds.set(meta.trackId, slot.id);
+          meta.audioPath = this._generateSafeFileName(slot.id, "audio", slot.audioFile.name, slot.audioFile.type);
+          await this._writeFileToOpfs(meta.audioPath, slot.audioFile);
+          stagedPaths.push(meta.audioPath);
+          meta.audioFileName = slot.audioFile.name;
+          meta.audioMime = slot.audioFile.type;
+          if (!meta.label) meta.label = slot.audioFile.name.replace(/\.[^/.]+$/, "").trim() || `${slot.id}번 음악`;
+        }
+
+        if (slot.imageFile) {
+          meta.imagePath = this._generateSafeFileName(slot.id, "image", slot.imageFile.name, slot.imageFile.type);
+          await this._writeFileToOpfs(meta.imagePath, slot.imageFile);
+          stagedPaths.push(meta.imagePath);
+          meta.imageFileName = slot.imageFile.name;
+          meta.imageMime = slot.imageFile.type;
+          meta.imageSource = slot.imageSource === "embedded" ? "embedded" : "manual";
+        }
+        restoredMeta.push(meta);
+      }
+
+      const restoredStats = Array.isArray(stats)
+        ? stats
+            .filter((record) => restoredTrackIds.get(String(record?.trackId || "")) === Number(record?.slotId))
+            .map((record) => normalizeStatsRecord(record))
+        : [];
+
+      const db = await this._openDatabase();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction([this.storeName, this.settingsStoreName, this.statsStoreName], "readwrite");
+        const slotStore = tx.objectStore(this.storeName);
+        slotStore.clear();
+        restoredMeta.forEach((meta) => slotStore.put(meta));
+        tx.objectStore(this.settingsStoreName).put({
+          key: "app-settings",
+          maxVolume: normalizeMaxVolume(settings?.maxVolume),
+          updatedAt: Date.now(),
+        });
+        const statsStore = tx.objectStore(this.statsStoreName);
+        statsStore.clear();
+        restoredStats.forEach((record) => statsStore.put(record));
+        const rejectTransaction = () => reject(tx.error || new Error("백업 복원 커밋 실패"));
+        tx.onerror = rejectTransaction;
+        tx.onabort = rejectTransaction;
+        tx.oncomplete = resolve;
+      });
+    } catch (error) {
+      await Promise.all(stagedPaths.map((path) => this._deleteFileFromOpfs(path)));
+      throw error;
+    }
+
+    const restoredPathSet = new Set(stagedPaths);
+    for (const meta of oldMeta) {
+      for (const path of [meta.audioPath, meta.imagePath]) {
+        if (path && !restoredPathSet.has(path)) await this._deleteFileFromOpfs(path);
+      }
+    }
+
+    return {
+      slots: await this.listSlots(),
+      settings: await this.getSettings(),
+      stats: await this.getAllPlaybackStats(),
+    };
   }
 
   async getSettings() {

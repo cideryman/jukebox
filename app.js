@@ -2,10 +2,13 @@ import { storage } from "./storage.js";
 import { normalizeFileForKind } from "./file-types.js";
 import { extractEmbeddedArtwork } from "./album-art.js";
 import { applyVolumeLimit } from "./volume.js";
+import { createBackupArchive, readBackupArchive } from "./backup.js";
+import { ActivationGuard, PointerGestureTracker } from "./interaction.js";
 
 const SLOT_COUNT = 9;
 const HOLD_DURATION_MS = 2000;
 const ERROR_DISPLAY_MS = 1800;
+const STATS_CHECKPOINT_MS = 30000;
 const AUDIO_ACCEPT = "audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac";
 const IMAGE_ACCEPT = "image/*,.jpg,.jpeg,.png,.webp,.gif";
 
@@ -18,6 +21,7 @@ const slots = Array.from({ length: SLOT_COUNT }, (_, index) => ({
   imageFileName: "",
   imageUrl: null,
   imageSource: null,
+  trackId: null,
   label: "",
   hasError: false,
   hasPersistedData: false,
@@ -32,6 +36,8 @@ const playback = {
 
 // 진행 중인 저장 작업을 추적하여 빠른 연속 등록/재생 경쟁 상태 방지
 const savingSlots = new Set();
+const activationGuard = new ActivationGuard(700);
+const pointerGesture = new PointerGestureTracker(24);
 
 const grid = document.querySelector("#jukeboxGrid");
 const slotEditors = document.querySelector("#slotEditors");
@@ -44,6 +50,11 @@ const settingsFeedback = document.querySelector("#settingsFeedback");
 const liveRegion = document.querySelector("#liveRegion");
 const maxVolumeRange = document.querySelector("#maxVolumeRange");
 const maxVolumeValue = document.querySelector("#maxVolumeValue");
+const exportBackupButton = document.querySelector("#exportBackup");
+const importBackupInput = document.querySelector("#importBackup");
+const importBackupLabel = importBackupInput.closest(".backup-import");
+const playbackStatsList = document.querySelector("#playbackStatsList");
+const clearAllStatsButton = document.querySelector("#clearAllStats");
 
 let holdTimer = null;
 let holdOpened = false;
@@ -52,6 +63,12 @@ let errorTimer = null;
 let maxVolume = 100;
 let persistedMaxVolume = 100;
 let settingsSaving = false;
+let maintenanceBusy = false;
+let maintenanceAction = "";
+let stabilizationTimer = null;
+let listeningSession = null;
+let listeningCheckpointTimer = null;
+const playbackStats = new Map();
 
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return "0 B";
@@ -59,6 +76,74 @@ function formatBytes(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   const value = (bytes / Math.pow(1024, i)).toFixed(i >= 2 ? 1 : 0);
   return `${value} ${units[i]}`;
+}
+
+function formatListeningTime(milliseconds) {
+  const totalMinutes = Math.floor(Math.max(0, milliseconds) / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `${hours}시간 ${minutes}분`;
+  if (minutes > 0) return `${minutes}분`;
+  return milliseconds > 0 ? "1분 미만" : "0분";
+}
+
+function renderPlaybackStats() {
+  const fragment = document.createDocumentFragment();
+  const audioSlots = slots.filter((slot) => slot.audioFile && slot.trackId);
+  clearAllStatsButton.disabled =
+    maintenanceBusy || settingsSaving || savingSlots.size > 0 || playbackStats.size === 0;
+
+  if (audioSlots.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "stats-empty";
+    empty.textContent = "음악을 등록하면 선택 기록이 여기에 표시됩니다.";
+    fragment.append(empty);
+  }
+
+  for (const slot of audioSlots) {
+    const stat = playbackStats.get(slot.trackId) || {
+      selectionCount: 0,
+      completedCount: 0,
+      listenedMs: 0,
+      lastPlayedAt: 0,
+    };
+    const row = document.createElement("article");
+    row.className = "stats-row";
+
+    if (slot.imageUrl) {
+      const image = document.createElement("img");
+      image.className = "stats-image";
+      image.src = slot.imageUrl;
+      image.alt = "";
+      row.append(image);
+    } else {
+      const number = document.createElement("span");
+      number.className = "stats-slot-number";
+      number.textContent = String(slot.id);
+      row.append(number);
+    }
+
+    const copy = document.createElement("div");
+    copy.className = "stats-copy";
+    const title = document.createElement("strong");
+    title.textContent = `${slot.id}번 · ${slot.label || "음악"}`;
+    const values = document.createElement("p");
+    values.className = "stats-values";
+    const recent = stat.lastPlayedAt ? new Date(stat.lastPlayedAt).toLocaleDateString("ko-KR") : "기록 없음";
+    values.textContent = `선택 ${stat.selectionCount}회 · 완료 ${stat.completedCount}회 · ${formatListeningTime(stat.listenedMs)} · 최근 ${recent}`;
+    copy.append(title, values);
+
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "stats-reset-button";
+    reset.dataset.trackId = slot.trackId;
+    reset.dataset.slotId = String(slot.id);
+    reset.textContent = "초기화";
+    reset.disabled = maintenanceBusy || !playbackStats.has(slot.trackId);
+    row.append(copy, reset);
+    fragment.append(row);
+  }
+  playbackStatsList.replaceChildren(fragment);
 }
 
 function isSlotReady(slot) {
@@ -106,7 +191,7 @@ function renderJukebox() {
     const isActive = playback.activeSlotId === slot.id && playback.status === "playing";
     const isLoading = playback.activeSlotId === slot.id && playback.status === "loading";
     const hasError = playback.errorSlotId === slot.id;
-    const isSaving = savingSlots.has(slot.id); // 저장 중 상태 확인
+    const isSaving = savingSlots.has(slot.id) || maintenanceBusy; // 저장·복원 중 상태 확인
 
     const button = document.createElement("button");
     button.type = "button";
@@ -119,6 +204,7 @@ function renderJukebox() {
     button.classList.toggle("is-active", isActive || isLoading);
     button.classList.toggle("is-loading", isLoading || isSaving);
     button.classList.toggle("is-error", hasError);
+    button.classList.toggle("is-stabilizing", activationGuard.isStabilizing(slot.id));
     button.setAttribute("aria-label", `${slot.id}번 음악 ${isActive ? "정지" : "재생"}`);
     button.setAttribute("aria-pressed", String(isActive));
 
@@ -153,18 +239,22 @@ function renderJukebox() {
 
 function renderSettings() {
   const fragment = document.createDocumentFragment();
-  const isAnySlotSaving = savingSlots.size > 0 || settingsSaving;
+  const isAnySlotSaving = savingSlots.size > 0 || settingsSaving || maintenanceBusy;
 
   closeSettingsButton.disabled = isAnySlotSaving;
   closeSettingsButton.textContent = isAnySlotSaving ? "저장 중…" : "확인";
   maxVolumeRange.value = String(maxVolume);
-  maxVolumeRange.disabled = settingsSaving;
+  maxVolumeRange.disabled = settingsSaving || maintenanceBusy;
   maxVolumeValue.value = `${maxVolume}%`;
   maxVolumeValue.textContent = `${maxVolume}%`;
+  exportBackupButton.disabled = maintenanceBusy || settingsSaving || savingSlots.size > 0;
+  exportBackupButton.textContent = maintenanceBusy && maintenanceAction === "export" ? "백업 만드는 중…" : "전체 백업 저장";
+  importBackupInput.disabled = maintenanceBusy || settingsSaving || savingSlots.size > 0;
+  importBackupLabel.classList.toggle("is-disabled", importBackupInput.disabled);
 
   slots.forEach((slot) => {
     const ready = isSlotReady(slot);
-    const isSaving = savingSlots.has(slot.id); // 저장 중 상태 확인
+    const isSaving = savingSlots.has(slot.id) || maintenanceBusy; // 저장·복원 중 상태 확인
     const editor = document.createElement("article");
     editor.className = "slot-editor";
     editor.dataset.slotId = String(slot.id);
@@ -244,6 +334,7 @@ function renderSettings() {
   });
 
   slotEditors.replaceChildren(fragment);
+  renderPlaybackStats();
 }
 
 function createFileAction(slotId, kind, text, accept, disabled = false) {
@@ -298,6 +389,153 @@ async function updateStorageInfo() {
   }
 }
 
+function startMaintenance(action) {
+  maintenanceBusy = true;
+  maintenanceAction = action;
+  renderAll();
+}
+
+function finishMaintenance() {
+  maintenanceBusy = false;
+  maintenanceAction = "";
+  renderAll();
+}
+
+async function exportBackup() {
+  if (maintenanceBusy || savingSlots.size > 0 || settingsSaving) return;
+  startMaintenance("export");
+  try {
+    if (listeningSession) await flushListening({ continueSession: true });
+    const snapshot = await storage.createBackupSnapshot();
+    const archive = await createBackupArchive(snapshot);
+    const url = URL.createObjectURL(archive);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = archive.name;
+    link.style.display = "none";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    showToast(`백업 파일을 저장했습니다. (${formatBytes(archive.size)})`);
+    announce("전체 주크박스 백업 파일을 저장했습니다.");
+  } catch (error) {
+    console.error("백업 생성 실패:", error);
+    showToast(error?.message || "백업 파일을 만들지 못했습니다.");
+  } finally {
+    finishMaintenance();
+  }
+}
+
+async function importBackup(file) {
+  if (!file || maintenanceBusy || savingSlots.size > 0 || settingsSaving) return;
+  startMaintenance("import");
+  try {
+    const snapshot = await readBackupArchive(file);
+    const musicCount = snapshot.slots.filter((slot) => slot.audioFile).length;
+    const createdDate = new Date(snapshot.createdAt);
+    const dateLabel = Number.isNaN(createdDate.getTime()) ? "날짜 정보 없음" : createdDate.toLocaleString("ko-KR");
+    const shouldRestore = window.confirm(
+      `백업 날짜: ${dateLabel}\n음악: ${musicCount}개\n파일 크기: ${formatBytes(file.size)}\n\n현재 주크박스를 이 백업으로 교체할까요?`,
+    );
+    if (!shouldRestore) return;
+
+    if (playback.activeSlotId) stopPlayback({ announceStop: false });
+    await storage.restoreBackupSnapshot(snapshot);
+    await loadPersistedSlots();
+    showToast("백업에서 주크박스를 복원했습니다.");
+    announce("전체 주크박스 복원을 완료했습니다.");
+  } catch (error) {
+    console.error("백업 복원 실패:", error);
+    showToast(error?.message || "백업을 복원하지 못했습니다. 기존 내용은 유지됩니다.");
+  } finally {
+    importBackupInput.value = "";
+    finishMaintenance();
+  }
+}
+
+function acceptStatsUpdate(promise) {
+  promise
+    .then((record) => {
+      if (!record?.trackId) return;
+      playbackStats.set(record.trackId, record);
+      if (settingsDialog.open) renderPlaybackStats();
+    })
+    .catch((error) => {
+      console.warn("재생 통계를 저장하지 못했습니다. 재생은 계속합니다:", error);
+    });
+}
+
+function scheduleListeningCheckpoint() {
+  window.clearTimeout(listeningCheckpointTimer);
+  if (!listeningSession) return;
+  listeningCheckpointTimer = window.setTimeout(() => flushListening({ continueSession: true }), STATS_CHECKPOINT_MS);
+}
+
+function beginListening(slot, { countSelection }) {
+  listeningSession = {
+    trackId: slot.trackId,
+    slotId: slot.id,
+    startedAt: performance.now(),
+  };
+  if (countSelection && slot.trackId) {
+    acceptStatsUpdate(storage.recordPlaybackStart(slot.trackId, slot.id));
+  }
+  scheduleListeningCheckpoint();
+}
+
+function flushListening({ completed = false, continueSession = false } = {}) {
+  if (!listeningSession) return Promise.resolve();
+  const now = performance.now();
+  const session = { ...listeningSession };
+  const listenedMs = Math.max(0, Math.round(now - session.startedAt));
+  window.clearTimeout(listeningCheckpointTimer);
+
+  if (continueSession) {
+    listeningSession.startedAt = now;
+    scheduleListeningCheckpoint();
+  } else {
+    listeningSession = null;
+  }
+
+  if (session.trackId && (listenedMs > 0 || completed)) {
+    const update = storage.recordListening(session.trackId, session.slotId, listenedMs, { completed });
+    acceptStatsUpdate(update);
+    return update.catch(() => null);
+  }
+  return Promise.resolve();
+}
+
+async function clearStatsForTrack(trackId, slotId) {
+  if (!trackId || maintenanceBusy) return;
+  if (!window.confirm(`${slotId}번 음악의 재생 기록을 초기화할까요?`)) return;
+  try {
+    await storage.clearPlaybackStats(trackId);
+    if (listeningSession?.trackId === trackId) listeningSession.startedAt = performance.now();
+    playbackStats.delete(trackId);
+    renderPlaybackStats();
+    showToast(`${slotId}번 음악의 재생 기록을 초기화했습니다.`);
+  } catch (error) {
+    console.error("재생 기록 초기화 실패:", error);
+    showToast("재생 기록을 초기화하지 못했습니다.");
+  }
+}
+
+async function clearAllStats() {
+  if (maintenanceBusy || playbackStats.size === 0) return;
+  if (!window.confirm("모든 음악의 재생 기록을 초기화할까요?")) return;
+  try {
+    await storage.clearPlaybackStats();
+    if (listeningSession) listeningSession.startedAt = performance.now();
+    playbackStats.clear();
+    renderPlaybackStats();
+    showToast("모든 재생 기록을 초기화했습니다.");
+  } catch (error) {
+    console.error("전체 재생 기록 초기화 실패:", error);
+    showToast("재생 기록을 초기화하지 못했습니다.");
+  }
+}
+
 async function playSlot(slotId, { resume = false } = {}) {
   const slot = getSlot(slotId);
   if (!slot || !isSlotReady(slot)) return;
@@ -306,6 +544,7 @@ async function playSlot(slotId, { resume = false } = {}) {
   applyVolumeLimit(audio, maxVolume);
 
   if (!resume) {
+    flushListening();
     audio.pause();
     audio.src = slot.audioUrl;
     audio.currentTime = 0;
@@ -322,6 +561,7 @@ async function playSlot(slotId, { resume = false } = {}) {
     if (requestId !== playback.requestId) return;
 
     playback.status = "playing";
+    beginListening(slot, { countSelection: !resume });
     setMediaPlaybackState("playing");
     renderJukebox();
     announce(`${slot.id}번 음악을 재생합니다.`);
@@ -344,8 +584,9 @@ async function playSlot(slotId, { resume = false } = {}) {
   }
 }
 
-function stopPlayback({ announceStop = true } = {}) {
+function stopPlayback({ announceStop = true, skipStatsFlush = false } = {}) {
   playback.requestId += 1;
+  if (!skipStatsFlush) flushListening();
   audio.pause();
   try {
     audio.currentTime = 0;
@@ -368,6 +609,7 @@ function stopPlayback({ announceStop = true } = {}) {
 function pauseFromSystem() {
   if (!playback.activeSlotId || audio.paused) return;
   playback.requestId += 1;
+  flushListening();
   audio.pause();
   playback.status = "paused";
   setMediaPlaybackState("paused");
@@ -384,6 +626,18 @@ function handleTileActivation(slotId) {
   }
 
   playSlot(slotId);
+}
+
+function scheduleStabilizationEnd() {
+  window.clearTimeout(stabilizationTimer);
+  stabilizationTimer = window.setTimeout(() => renderJukebox(), activationGuard.remaining() + 20);
+}
+
+function requestTileActivation(slotId) {
+  const accepted = activationGuard.attempt(slotId);
+  scheduleStabilizationEnd();
+  if (accepted) handleTileActivation(slotId);
+  else renderJukebox();
 }
 
 async function registerFile(slotId, kind, file) {
@@ -421,6 +675,7 @@ async function registerFile(slotId, kind, file) {
     }
 
     if (kind === "audio") {
+      const previousTrackId = slot.trackId;
       if (slot.audioUrl) URL.revokeObjectURL(slot.audioUrl);
       if (slot.imageUrl) URL.revokeObjectURL(slot.imageUrl);
       slot.audioFile = updated.audioFile;
@@ -430,7 +685,9 @@ async function registerFile(slotId, kind, file) {
       slot.imageFileName = updated.imageFileName || "";
       slot.imageUrl = updated.imageFile ? URL.createObjectURL(updated.imageFile) : null;
       slot.imageSource = updated.imageSource || null;
+      slot.trackId = updated.trackId || null;
       slot.label = updated.label;
+      if (previousTrackId && previousTrackId !== slot.trackId) playbackStats.delete(previousTrackId);
     } else {
       if (slot.imageUrl) URL.revokeObjectURL(slot.imageUrl);
       slot.imageFile = updated.imageFile;
@@ -470,6 +727,7 @@ async function clearSlot(slotId) {
 
     if (slot.audioUrl) URL.revokeObjectURL(slot.audioUrl);
     if (slot.imageUrl) URL.revokeObjectURL(slot.imageUrl);
+    if (slot.trackId) playbackStats.delete(slot.trackId);
 
     Object.assign(slot, {
       audioFile: null,
@@ -479,6 +737,7 @@ async function clearSlot(slotId) {
       imageFileName: "",
       imageUrl: null,
       imageSource: null,
+      trackId: null,
       label: "",
       hasError: false,
       hasPersistedData: false,
@@ -566,7 +825,7 @@ function openSettings() {
 }
 
 function closeSettings() {
-  if (savingSlots.size > 0 || settingsSaving) {
+  if (savingSlots.size > 0 || settingsSaving || maintenanceBusy) {
     showToast("파일 저장이 끝난 뒤 확인을 눌러 주세요.");
     return;
   }
@@ -610,9 +869,15 @@ function revokeAllObjectUrls() {
 async function loadPersistedSlots() {
   try {
     await storage.init();
-    const [persistedList, persistedSettings] = await Promise.all([storage.listSlots(), storage.getSettings()]);
+    const [persistedList, persistedSettings, persistedStats] = await Promise.all([
+      storage.listSlots(),
+      storage.getSettings(),
+      storage.getAllPlaybackStats(),
+    ]);
     persistedMaxVolume = persistedSettings.maxVolume;
     applyMaxVolume(persistedSettings.maxVolume);
+    playbackStats.clear();
+    persistedStats.forEach((record) => playbackStats.set(record.trackId, record));
 
     // 복원에 성공한 경우에만 기존 URL을 폐기해 실패 시 현재 세션을 보존한다.
     revokeAllObjectUrls();
@@ -629,6 +894,7 @@ async function loadPersistedSlots() {
       slot.imageFileName = persisted.imageFileName || (persisted.imageFile ? persisted.imageFile.name : "");
       slot.imageUrl = persisted.imageFile ? URL.createObjectURL(persisted.imageFile) : null;
       slot.imageSource = persisted.imageSource || null;
+      slot.trackId = persisted.trackId || null;
 
       slot.label = persisted.label || (slot.audioFileName ? getFileLabel(slot.audioFileName) : "");
       slot.hasError = Boolean(persisted.error);
@@ -643,10 +909,61 @@ async function loadPersistedSlots() {
   }
 }
 
-grid.addEventListener("click", (event) => {
+grid.addEventListener("pointerdown", (event) => {
   const tile = event.target.closest(".track-tile");
   if (!tile || tile.disabled) return;
-  handleTileActivation(Number(tile.dataset.slotId));
+  const started = pointerGesture.begin({
+    pointerId: event.pointerId,
+    isPrimary: event.isPrimary,
+    button: event.button,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    slotId: tile.dataset.slotId,
+  });
+  if (!started) return;
+  event.preventDefault();
+  tile.classList.add("is-pressed");
+  try {
+    tile.setPointerCapture(event.pointerId);
+  } catch {}
+});
+
+grid.addEventListener("pointermove", (event) => {
+  const activeTile = grid.querySelector(".track-tile.is-pressed");
+  if (!activeTile) return;
+  if (!pointerGesture.move(event)) activeTile.classList.remove("is-pressed");
+});
+
+grid.addEventListener("pointerup", (event) => {
+  const activeTile = grid.querySelector(".track-tile.is-pressed");
+  if (activeTile) activeTile.classList.remove("is-pressed");
+  const slotId = pointerGesture.finish(event);
+  if (slotId) requestTileActivation(slotId);
+});
+
+grid.addEventListener("pointercancel", (event) => {
+  pointerGesture.cancel(event.pointerId);
+  grid.querySelector(".track-tile.is-pressed")?.classList.remove("is-pressed");
+});
+
+grid.addEventListener("lostpointercapture", (event) => {
+  pointerGesture.cancel(event.pointerId);
+  grid.querySelector(".track-tile.is-pressed")?.classList.remove("is-pressed");
+});
+
+grid.addEventListener("contextmenu", (event) => {
+  if (event.target.closest(".track-tile")) event.preventDefault();
+});
+
+grid.addEventListener("click", (event) => {
+  // Pointer 입력은 위 상태 기계에서 처리하고, detail=0인 키보드·보조공학 click만 이 경로로 받는다.
+  if (event.detail !== 0) {
+    event.preventDefault();
+    return;
+  }
+  const tile = event.target.closest(".track-tile");
+  if (!tile || tile.disabled) return;
+  requestTileActivation(Number(tile.dataset.slotId));
 });
 
 slotEditors.addEventListener("change", (event) => {
@@ -665,6 +982,16 @@ slotEditors.addEventListener("click", (event) => {
 
 maxVolumeRange.addEventListener("input", () => applyMaxVolume(maxVolumeRange.value));
 maxVolumeRange.addEventListener("change", persistMaxVolume);
+exportBackupButton.addEventListener("click", exportBackup);
+importBackupInput.addEventListener("change", () => {
+  const [file] = importBackupInput.files;
+  if (file) importBackup(file);
+});
+playbackStatsList.addEventListener("click", (event) => {
+  const button = event.target.closest(".stats-reset-button");
+  if (button) clearStatsForTrack(button.dataset.trackId, Number(button.dataset.slotId));
+});
+clearAllStatsButton.addEventListener("click", clearAllStats);
 
 settingsTrigger.addEventListener("pointerdown", startSettingsHold);
 settingsTrigger.addEventListener("pointerup", cancelSettingsHold);
@@ -687,9 +1014,13 @@ settingsDialog.addEventListener("click", (event) => {
   if (event.target === settingsDialog) closeSettings();
 });
 
-audio.addEventListener("ended", () => stopPlayback({ announceStop: false }));
+audio.addEventListener("ended", () => {
+  flushListening({ completed: true });
+  stopPlayback({ announceStop: false, skipStatsFlush: true });
+});
 audio.addEventListener("error", () => {
   if (playback.status !== "loading" && playback.status !== "playing") return;
+  flushListening();
   const failedSlotId = playback.activeSlotId;
   playback.status = "error";
   playback.activeSlotId = null;
@@ -699,7 +1030,11 @@ audio.addEventListener("error", () => {
   showToast("음악 파일을 확인해 주세요.");
 });
 
-window.addEventListener("beforeunload", revokeAllObjectUrls);
+window.addEventListener("pagehide", () => flushListening());
+window.addEventListener("beforeunload", () => {
+  flushListening();
+  revokeAllObjectUrls();
+});
 
 if ("serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => {

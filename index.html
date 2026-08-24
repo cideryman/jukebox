@@ -15,6 +15,7 @@
     />
     <title>나의 주크박스</title>
     <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -74,6 +75,21 @@
             </p>
           </section>
 
+          <section class="backup-panel" aria-labelledby="backupTitle">
+            <div>
+              <h2 id="backupTitle">전체 백업과 복원</h2>
+              <p>음악·사진·설정을 기기의 다운로드 또는 파일 앱에 보관합니다.</p>
+            </div>
+            <div class="backup-actions">
+              <button id="exportBackup" type="button">전체 백업 저장</button>
+              <label class="backup-import">
+                <input id="importBackup" type="file" accept=".zip,application/zip" />
+                <span>백업에서 복원</span>
+              </label>
+            </div>
+            <p class="backup-warning">브라우저의 사이트 데이터나 앱 데이터를 지우기 전에 먼저 백업 파일을 저장해 주세요.</p>
+          </section>
+
           <section class="storage-panel" aria-label="기기 저장소 상태">
             <div class="storage-panel-header">
               <div class="storage-stats">
@@ -106,6 +122,17 @@
               </svg>
               <span>이 기기의 로컬 저장소(IndexedDB + OPFS)에 보관됩니다. 브라우저 데이터나 캐시를 삭제하면 등록된 파일도 함께 삭제될 수 있습니다.</span>
             </p>
+          </section>
+
+          <section class="stats-panel" aria-labelledby="statsTitle">
+            <div class="stats-heading">
+              <div>
+                <h2 id="statsTitle">재생 통계</h2>
+                <p>기기 안에만 저장되는 선택 기록입니다.</p>
+              </div>
+              <button id="clearAllStats" type="button">전체 기록 초기화</button>
+            </div>
+            <div id="playbackStatsList" class="stats-list"></div>
           </section>
 
           <section id="slotEditors" class="slot-editors" aria-label="음악 칸 설정"></section>

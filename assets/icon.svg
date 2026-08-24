@@ -1,10 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
   <title id="title">나의 주크박스</title>
+  <desc id="description">짙은 남색 바탕에 청록색 레코드와 흰색 재생 버튼</desc>
   <rect width="512" height="512" rx="112" fill="#0b1220"/>
-  <rect x="72" y="72" width="368" height="368" rx="76" fill="#18243a"/>
-  <circle cx="256" cy="256" r="122" fill="#58e6d2"/>
-  <circle cx="256" cy="256" r="72" fill="#0b1220"/>
-  <circle cx="256" cy="256" r="22" fill="#f5f8ff"/>
-  <path d="M332 112v120.5c0 33-26.8 59.8-59.8 59.8h-11.4v-42h11.4c9.8 0 17.8-8 17.8-17.8V112h42Z" fill="#f5f8ff"/>
-  <circle cx="238" cy="292" r="38" fill="#f5f8ff"/>
+  <circle cx="256" cy="256" r="148" fill="#58e6d2"/>
+  <circle cx="256" cy="256" r="96" fill="#14233a"/>
+  <circle cx="256" cy="256" r="70" fill="none" stroke="#58e6d2" stroke-opacity=".34" stroke-width="8"/>
+  <path d="M232 207c0-10.6 11.8-17 20.7-11.2l78.6 49.2c8.5 5.3 8.5 17.7 0 23l-78.6 49.2c-8.9 5.8-20.7-.6-20.7-11.2v-99Z" fill="#f5f8ff"/>
 </svg>
