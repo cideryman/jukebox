@@ -59,12 +59,39 @@
           </button>
         </header>
 
-        <div class="prototype-notice" role="note">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 8v4.5m0 3.5h.01M4.5 19h15L12 4 4.5 19Z" />
-          </svg>
-          <span>실험용 목업입니다. 새로고침하거나 앱을 닫으면 등록한 파일이 사라집니다.</span>
-        </div>
+        <section class="storage-panel" aria-label="기기 저장소 상태">
+          <div class="storage-panel-header">
+            <div class="storage-stats">
+              <div class="storage-stat-item">
+                <span class="storage-stat-label">저장 공간</span>
+                <strong id="storageUsageText" class="storage-stat-value">계산 중...</strong>
+              </div>
+              <div class="storage-stat-item">
+                <span class="storage-stat-label">영구 저장 모드</span>
+                <span id="storagePersistedBadge" class="storage-badge">확인 중</span>
+              </div>
+            </div>
+            <div
+              id="storageProgressBar"
+              class="storage-progress-bar"
+              role="progressbar"
+              aria-valuenow="0"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-label="저장 공간 사용률"
+            >
+              <div id="storageProgressFill" class="storage-progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+          <p class="storage-notice">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 9v4m0 4h.01M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Z"
+              />
+            </svg>
+            <span>이 기기의 로컬 저장소(IndexedDB + OPFS)에 보관됩니다. 브라우저 데이터나 캐시를 삭제하면 등록된 파일도 함께 삭제될 수 있습니다.</span>
+          </p>
+        </section>
 
         <section id="slotEditors" class="slot-editors" aria-label="음악 칸 설정"></section>
       </div>

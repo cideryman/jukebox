@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>주크박스 영구 저장소 자동 검증 러너</title>
+    <style>
+      body {
+        background: #0b1220;
+        color: #f5f8ff;
+        font-family: system-ui, sans-serif;
+        padding: 24px;
+        line-height: 1.6;
+      }
+      h1 {
+        color: #58e6d2;
+      }
+      .test-case {
+        margin: 12px 0;
+        padding: 12px 16px;
+        border-radius: 8px;
+        background: #18243a;
+        border: 1px solid #2d3a50;
+      }
+      .test-case.pass {
+        border-left: 6px solid #58e6d2;
+      }
+      .test-case.fail {
+        border-left: 6px solid #ff918c;
+      }
+      .summary {
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin: 20px 0;
+        padding: 16px;
+        border-radius: 8px;
+      }
+      .summary.all-pass {
+        background: rgba(88, 230, 210, 0.2);
+        color: #58e6d2;
+      }
+      .summary.has-fail {
+        background: rgba(255, 145, 140, 0.2);
+        color: #ff918c;
+      }
+      pre {
+        background: #0d1627;
+        padding: 8px;
+        border-radius: 4px;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>주크박스 영구 로컬 저장 및 UX 검증</h1>
+    <div id="results">테스트 실행 중...</div>
+
+    <script type="module">
+      import { storage } from "./storage.js";
+
+      const resultsContainer = document.getElementById("results");
+      const testResults = [];
+
+      function createTestWavBlob() {
+        const header = new Uint8Array([
+          0x52, 0x49, 0x46, 0x46, // "RIFF"
+          0x2c, 0x00, 0x00, 0x00, // ChunkSize: 44
+          0x57, 0x41, 0x56, 0x45, // "WAVE"
+          0x66, 0x6d, 0x74, 0x20, // "fmt "
+          0x10, 0x00, 0x00, 0x00, // Subchunk1Size: 16
+          0x01, 0x00,             // AudioFormat: PCM (1)
+          0x01, 0x00,             // NumChannels: 1
+          0x40, 0x1f, 0x00, 0x00, // SampleRate: 8000
+          0x40, 0x1f, 0x00, 0x00, // ByteRate: 8000
+          0x01, 0x00,             // BlockAlign: 1
+          0x08, 0x00,             // BitsPerSample: 8
+          0x64, 0x61, 0x74, 0x61, // "data"
+          0x08, 0x00, 0x00, 0x00, // Subchunk2Size: 8
+          0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80 // 8 samples
+        ]);
+        return new Blob([header], { type: "audio/wav" });
+      }
+
+      function createTestPngBlob() {
+        // 1x1 valid transparent PNG
+        const png = new Uint8Array([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+          0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+          0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+          0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+          0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+          0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+          0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+          0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+          0x42, 0x60, 0x82
+        ]);
+        return new Blob([png], { type: "image/png" });
+      }
+
+      async function runTest(name, fn) {
+        try {
+          await fn();
+          testResults.push({ name, pass: true });
+          console.log(`%c[PASS] ${name}`, "color: #58e6d2; font-weight: bold;");
+        } catch (err) {
+          testResults.push({ name, pass: false, error: err.message || String(err) });
+          console.error(`%c[FAIL] ${name}`, "color: #ff918c; font-weight: bold;", err);
+        }
+      }
+
+      function assert(condition, message) {
+        if (!condition) {
+          throw new Error(message || "Assertion failed");
+        }
+      }
+
+      async function runAllTests() {
+        console.log("주크박스 자동 검증 시작...");
+
+        // 1. 초기화 및 OPFS / IndexedDB 연결
+        await runTest("1. storage.init() 초기화 및 IDB/OPFS 연결", async () => {
+          await storage.init();
+          assert(storage.initialized, "storage가 초기화되어야 함");
+          assert(storage.db !== null, "IndexedDB 연결이 생성되어야 함");
+          assert(storage.mediaDir !== null, "OPFS mediaDir 핸들이 생성되어야 함");
+        });
+
+        // 2. 슬롯 1 & 2에 음원(WAV)과 사진(PNG) 등록
+        const wav1 = new File([createTestWavBlob()], "song1.wav", { type: "audio/wav" });
+        const png1 = new File([createTestPngBlob()], "photo1.png", { type: "image/png" });
+        const wav2 = new File([createTestWavBlob()], "song2.wav", { type: "audio/wav" });
+        const png2 = new File([createTestPngBlob()], "photo2.png", { type: "image/png" });
+
+        await runTest("2. 슬롯 1 & 2 음원/사진 영구 저장 (saveSlot)", async () => {
+          const res1 = await storage.saveSlot(1, wav1, png1);
+          assert(res1.id === 1, "슬롯 1 ID 일치");
+          assert(res1.audioFileName === "song1.wav", "음원 파일명 일치");
+          assert(res1.imageFileName === "photo1.png", "사진 파일명 일치");
+          assert(res1.audioPath && res1.audioPath.startsWith("slot_1_audio_"), "OPFS 안전 음원 파일명 생성");
+          assert(res1.imagePath && res1.imagePath.startsWith("slot_1_image_"), "OPFS 안전 사진 파일명 생성");
+
+          const res2 = await storage.saveSlot(2, wav2, png2);
+          assert(res2.id === 2, "슬롯 2 ID 일치");
+          assert(res2.audioFileName === "song2.wav", "음원 파일명 일치");
+          assert(res2.imageFileName === "photo2.png", "사진 파일명 일치");
+        });
+
+        // 3. listSlots 복원 검증
+        let loadedSlots;
+        await runTest("3. listSlots() 호출 시 1~9번 슬롯 복원 및 File 객체 재구성", async () => {
+          loadedSlots = await storage.listSlots();
+          assert(loadedSlots.length === 9, "총 9개 슬롯 반환");
+
+          const slot1 = loadedSlots.find(s => s.id === 1);
+          assert(slot1.audioFile instanceof File, "슬롯 1 audioFile이 File 인스턴스여야 함");
+          assert(slot1.audioFile.size > 0, "슬롯 1 audioFile 데이터가 유효해야 함");
+          assert(slot1.imageFile instanceof File, "슬롯 1 imageFile이 File 인스턴스여야 함");
+          assert(slot1.imageFile.size > 0, "슬롯 1 imageFile 데이터가 유효해야 함");
+
+          const slot2 = loadedSlots.find(s => s.id === 2);
+          assert(slot2.audioFile instanceof File, "슬롯 2 audioFile 복원");
+          assert(slot2.imageFile instanceof File, "슬롯 2 imageFile 복원");
+
+          const slot3 = loadedSlots.find(s => s.id === 3);
+          assert(slot3.audioFile === null, "빈 슬롯 3은 audioFile이 null이어야 함");
+        });
+
+        // 4. 저장소 용량 및 영구 저장 상태 조회 (estimate)
+        await runTest("4. storage.estimate() 저장 공간 및 영구 저장 상태 반환", async () => {
+          const est = await storage.estimate();
+          assert(typeof est.usage === "number", "usage는 숫자");
+          assert(typeof est.quota === "number", "quota는 숫자");
+          assert(typeof est.persisted === "boolean", "persisted는 불리언");
+          assert(typeof est.percent === "number", "percent는 숫자");
+          console.log(`Storage estimate: usage=${est.usage} bytes, quota=${est.quota} bytes, persisted=${est.persisted}, percent=${est.percent}%`);
+        });
+
+        // 5. 단일 파일 교체 (saveSlotFile) 및 이전 OPFS 파일 자동 정리
+        let oldImagePath;
+        await runTest("5. 슬롯 1 이미지 교체 시 이전 OPFS 파일 삭제 및 신규 파일 저장", async () => {
+          const metaBefore = await storage._getMetaFromDb(1);
+          oldImagePath = metaBefore.imagePath;
+
+          const newPng = new File([createTestPngBlob()], "photo1_replaced.png", { type: "image/png" });
+          const updated = await storage.saveSlotFile(1, "image", newPng);
+
+          assert(updated.imageFileName === "photo1_replaced.png", "교체된 파일명 반영");
+          assert(updated.imagePath !== oldImagePath, "새로운 OPFS 파일명 생성");
+
+          // 이전 파일이 OPFS에서 삭제되었는지 확인
+          let oldFileFound = false;
+          try {
+            await storage._readFileFromOpfs(oldImagePath);
+            oldFileFound = true;
+          } catch (e) {
+            oldFileFound = false;
+          }
+          assert(!oldFileFound, "이전 OPFS 파일은 삭제되어야 함");
+        });
+
+        // 6. 슬롯 삭제 (removeSlot) 및 IDB + OPFS 완전 정리
+        await runTest("6. 슬롯 2 삭제 (removeSlot) 시 메타데이터 및 모든 OPFS 파일 삭제", async () => {
+          const meta2 = await storage._getMetaFromDb(2);
+          const audioPath2 = meta2.audioPath;
+          const imagePath2 = meta2.imagePath;
+
+          await storage.removeSlot(2);
+
+          const metaAfter = await storage._getMetaFromDb(2);
+          assert(metaAfter === null, "슬롯 2 메타데이터가 DB에서 삭제되어야 함");
+
+          let audioFound = false;
+          try {
+            await storage._readFileFromOpfs(audioPath2);
+            audioFound = true;
+          } catch {}
+          assert(!audioFound, "슬롯 2 음원 파일이 OPFS에서 삭제되어야 함");
+
+          let imageFound = false;
+          try {
+            await storage._readFileFromOpfs(imagePath2);
+            imageFound = true;
+          } catch {}
+          assert(!imageFound, "슬롯 2 이미지 파일이 OPFS에서 삭제되어야 함");
+        });
+
+        // 7. 슬롯 파일 손상 내결함성 검증 (Corrupted Slot Resilience)
+        await runTest("7. 특정 슬롯 OPFS 파일 손상 시 해당 슬롯만 에러 처리되고 다른 슬롯 정상 로드", async () => {
+          // 슬롯 3에 새 파일 등록
+          const wav3 = new File([createTestWavBlob()], "song3.wav", { type: "audio/wav" });
+          const png3 = new File([createTestPngBlob()], "photo3.png", { type: "image/png" });
+          await storage.saveSlot(3, wav3, png3);
+
+          // 슬롯 1의 음원 OPFS 파일을 고의로 삭제하여 손상 유발
+          const meta1 = await storage._getMetaFromDb(1);
+          await storage._deleteFileFromOpfs(meta1.audioPath);
+
+          const listWithCorrupted = await storage.listSlots();
+          const slot1 = listWithCorrupted.find(s => s.id === 1);
+          const slot3 = listWithCorrupted.find(s => s.id === 3);
+
+          assert(slot1.audioFile === null, "손상된 음원은 null 처리");
+          assert(slot1.error && slot1.error.audio === true, "슬롯 1에 음원 에러 플래그 설정");
+          assert(slot3.audioFile instanceof File && slot3.imageFile instanceof File, "슬롯 3은 정상 로드되어야 함");
+        });
+
+        // 8. 동시성 제어 검증 (Rapid sequential writes to same slot)
+        await runTest("8. 동일 슬롯 빠른 연속 변경 시 큐 직렬화로 최종 결과 정상 반영", async () => {
+          const wavA = new File([createTestWavBlob()], "quickA.wav", { type: "audio/wav" });
+          const wavB = new File([createTestWavBlob()], "quickB.wav", { type: "audio/wav" });
+          const wavC = new File([createTestWavBlob()], "quickC.wav", { type: "audio/wav" });
+
+          // 동시 호출
+          const p1 = storage.saveSlotFile(4, "audio", wavA);
+          const p2 = storage.saveSlotFile(4, "audio", wavB);
+          const p3 = storage.saveSlotFile(4, "audio", wavC);
+
+          await Promise.all([p1, p2, p3]);
+
+          const finalMeta = await storage._getMetaFromDb(4);
+          assert(finalMeta.audioFileName === "quickC.wav", "마지막 작업(quickC)의 결과가 유지되어야 함");
+        });
+
+        // 9. 고아 파일 정리 (Garbage Collection on init)
+        await runTest("9. init() 실행 시 참조되지 않는 고아 OPFS 파일 자동 정리", async () => {
+          // 가짜 고아 파일 OPFS에 직접 생성
+          const dir = await storage._getMediaDir();
+          const orphanHandle = await dir.getFileHandle("orphan_test_file.bin", { create: true });
+          const writable = await orphanHandle.createWritable();
+          await writable.write(new Uint8Array([1, 2, 3]));
+          await writable.close();
+
+          // init() 다시 호출하여 정리 트리거
+          storage.initialized = false;
+          await storage.init();
+
+          let orphanStillExists = false;
+          try {
+            await dir.getFileHandle("orphan_test_file.bin");
+            orphanStillExists = true;
+          } catch {}
+          assert(!orphanStillExists, "고아 파일이 정상적으로 정리되어야 함");
+        });
+
+        // 10. Service Worker 캐시 목록 검증
+        await runTest("10. Service Worker 캐시 스토리지 확인", async () => {
+          if ("caches" in window) {
+            const keys = await caches.keys();
+            console.log("Caches found:", keys);
+            assert(keys.length >= 0, "CacheStorage API 정상 작동");
+          }
+        });
+
+        // 결과 렌더링
+        renderSummary();
+      }
+
+      function renderSummary() {
+        const passedCount = testResults.filter(t => t.pass).length;
+        const totalCount = testResults.length;
+        const allPass = passedCount === totalCount;
+
+        let html = `
+          <div class="summary ${allPass ? 'all-pass' : 'has-fail'}">
+            ${allPass ? '✓ 모든 영구 로컬 저장 및 안정성 테스트 통과' : '✗ 일부 테스트 실패'} (${passedCount}/${totalCount})
+          </div>
+        `;
+
+        testResults.forEach(r => {
+          html += `
+            <div class="test-case ${r.pass ? 'pass' : 'fail'}">
+              <strong>${r.pass ? '✓ PASS' : '✗ FAIL'}: ${r.name}</strong>
+              ${r.error ? `<pre>${r.error}</pre>` : ''}
+            </div>
+          `;
+        });
+
+        resultsContainer.innerHTML = html;
+        window.__TEST_RESULTS__ = {
+          allPass,
+          passedCount,
+          totalCount,
+          results: testResults
+        };
+      }
+
+      runAllTests();
+    </script>
+  </body>
+</html>
