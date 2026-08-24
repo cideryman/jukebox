@@ -43,59 +43,63 @@
     </main>
 
     <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
-      <div class="settings-layout">
-        <header class="settings-header">
-          <div>
+      <div class="settings-frame">
+        <div class="settings-layout">
+          <header class="settings-header">
             <p class="settings-eyebrow">보호자 전용</p>
             <h1 id="settingsTitle">음악과 사진 등록</h1>
             <p class="settings-description">
               음악과 사진이 모두 등록된 칸만 주크박스 화면에 나타납니다.
             </p>
-          </div>
-          <button id="closeSettings" class="icon-button" type="button" aria-label="설정 닫기">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="m6.5 6.5 11 11m0-11-11 11" />
-            </svg>
-          </button>
-        </header>
+          </header>
 
-        <p id="settingsFeedback" class="settings-feedback" role="status" aria-live="polite" hidden></p>
+          <p id="settingsFeedback" class="settings-feedback" role="status" aria-live="polite" hidden></p>
 
-        <section class="storage-panel" aria-label="기기 저장소 상태">
-          <div class="storage-panel-header">
-            <div class="storage-stats">
-              <div class="storage-stat-item">
-                <span class="storage-stat-label">저장 공간</span>
-                <strong id="storageUsageText" class="storage-stat-value">계산 중...</strong>
+          <section class="storage-panel" aria-label="기기 저장소 상태">
+            <div class="storage-panel-header">
+              <div class="storage-stats">
+                <div class="storage-stat-item">
+                  <span class="storage-stat-label">저장 공간</span>
+                  <strong id="storageUsageText" class="storage-stat-value">계산 중...</strong>
+                </div>
+                <div class="storage-stat-item">
+                  <span class="storage-stat-label">영구 저장 모드</span>
+                  <span id="storagePersistedBadge" class="storage-badge">확인 중</span>
+                </div>
               </div>
-              <div class="storage-stat-item">
-                <span class="storage-stat-label">영구 저장 모드</span>
-                <span id="storagePersistedBadge" class="storage-badge">확인 중</span>
+              <div
+                id="storageProgressBar"
+                class="storage-progress-bar"
+                role="progressbar"
+                aria-valuenow="0"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-label="저장 공간 사용률"
+              >
+                <div id="storageProgressFill" class="storage-progress-fill" style="width: 0%;"></div>
               </div>
             </div>
-            <div
-              id="storageProgressBar"
-              class="storage-progress-bar"
-              role="progressbar"
-              aria-valuenow="0"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-label="저장 공간 사용률"
-            >
-              <div id="storageProgressFill" class="storage-progress-fill" style="width: 0%;"></div>
-            </div>
-          </div>
-          <p class="storage-notice">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M12 9v4m0 4h.01M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Z"
-              />
-            </svg>
-            <span>이 기기의 로컬 저장소(IndexedDB + OPFS)에 보관됩니다. 브라우저 데이터나 캐시를 삭제하면 등록된 파일도 함께 삭제될 수 있습니다.</span>
-          </p>
-        </section>
+            <p class="storage-notice">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 9v4m0 4h.01M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Z"
+                />
+              </svg>
+              <span>이 기기의 로컬 저장소(IndexedDB + OPFS)에 보관됩니다. 브라우저 데이터나 캐시를 삭제하면 등록된 파일도 함께 삭제될 수 있습니다.</span>
+            </p>
+          </section>
 
-        <section id="slotEditors" class="slot-editors" aria-label="음악 칸 설정"></section>
+          <section id="slotEditors" class="slot-editors" aria-label="음악 칸 설정"></section>
+        </div>
+
+        <footer class="settings-footer">
+          <button
+            id="closeSettings"
+            class="settings-confirm-button"
+            type="button"
+            aria-label="설정을 닫고 음악 화면으로 돌아가기"
+          >확인</button>
+        </footer>
       </div>
     </dialog>
 

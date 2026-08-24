@@ -120,6 +120,10 @@ function renderJukebox() {
 
 function renderSettings() {
   const fragment = document.createDocumentFragment();
+  const isAnySlotSaving = savingSlots.size > 0;
+
+  closeSettingsButton.disabled = isAnySlotSaving;
+  closeSettingsButton.textContent = isAnySlotSaving ? "저장 중…" : "확인";
 
   slots.forEach((slot) => {
     const ready = isSlotReady(slot);
@@ -522,6 +526,10 @@ function openSettings() {
 }
 
 function closeSettings() {
+  if (savingSlots.size > 0) {
+    showToast("파일 저장이 끝난 뒤 확인을 눌러 주세요.");
+    return;
+  }
   if (settingsDialog.open) settingsDialog.close();
   settingsTrigger.focus({ preventScroll: true });
 }

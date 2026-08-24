@@ -206,10 +206,10 @@ button {
 }
 
 .settings-trigger:focus-visible,
-.icon-button:focus-visible,
 .file-action:focus-within,
 .delete-button:focus-visible,
-.close-button:focus-visible {
+.close-button:focus-visible,
+.settings-confirm-button:focus-visible {
   outline: 3px solid var(--jukebox-accent);
   outline-offset: 3px;
 }
@@ -233,18 +233,20 @@ button {
   backdrop-filter: blur(10px);
 }
 
-.settings-layout {
+.settings-frame {
   height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.settings-layout {
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: clamp(18px, 3vw, 34px);
 }
 
 .settings-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
   margin-bottom: 18px;
 }
 
@@ -279,26 +281,35 @@ button {
   line-height: 1.45;
 }
 
-.icon-button {
-  display: grid;
-  flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid var(--jukebox-line);
-  border-radius: 14px;
-  background: var(--jukebox-panel-raised);
+.settings-footer {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  padding:
+    14px max(clamp(18px, 3vw, 34px), env(safe-area-inset-right))
+    max(14px, env(safe-area-inset-bottom))
+    max(clamp(18px, 3vw, 34px), env(safe-area-inset-left));
+  border-top: 1px solid var(--jukebox-line);
+  background: rgba(17, 27, 46, 0.98);
+  box-shadow: 0 -12px 28px rgba(0, 0, 0, 0.28);
+}
+
+.settings-confirm-button {
+  width: 100%;
+  min-height: 58px;
+  padding: 12px 24px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--jukebox-accent);
+  color: #07141c;
+  font-size: 1.08rem;
+  font-weight: 850;
   cursor: pointer;
 }
 
-.icon-button svg {
-  width: 23px;
-  height: 23px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-width: 2;
+.settings-confirm-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 
 .storage-panel {
@@ -608,6 +619,11 @@ button {
 
   .settings-layout {
     padding: 18px 14px;
+  }
+
+  .settings-footer {
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(14px, env(safe-area-inset-left));
   }
 }
 
