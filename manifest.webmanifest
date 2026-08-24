@@ -1,0 +1,21 @@
+{
+  "name": "나의 주크박스",
+  "short_name": "주크박스",
+  "description": "사진을 눌러 음악을 선택할 수 있는 직관적인 오프라인 주크박스",
+  "lang": "ko-KR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220",
+  "categories": ["music", "accessibility"],
+  "icons": [
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

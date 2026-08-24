@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1220" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="application-name" content="나의 주크박스" />
+    <meta
+      name="description"
+      content="글자를 몰라도 사진을 눌러 음악을 선택할 수 있는 오프라인 주크박스"
+    />
+    <title>나의 주크박스</title>
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell" aria-label="나의 주크박스">
+      <section
+        id="jukeboxGrid"
+        class="jukebox-grid"
+        aria-label="음악 선택판"
+      ></section>
+
+      <button
+        id="settingsTrigger"
+        class="settings-trigger"
+        type="button"
+        aria-label="보호자 설정. 2초 동안 길게 누르세요."
+        aria-describedby="settingsHint"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 8.7a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6Zm8.2 4.1v-1.6l-2-.7a7.5 7.5 0 0 0-.7-1.7l.9-1.9-1.2-1.2-1.9.9a7.5 7.5 0 0 0-1.7-.7l-.7-2h-1.7l-.7 2a7.5 7.5 0 0 0-1.7.7l-1.9-.9-1.2 1.2.9 1.9a7.5 7.5 0 0 0-.7 1.7l-2 .7v1.6l2 .7c.2.6.4 1.2.7 1.7l-.9 1.9 1.2 1.2 1.9-.9c.5.3 1.1.6 1.7.7l.7 2h1.7l.7-2c.6-.2 1.2-.4 1.7-.7l1.9.9 1.2-1.2-.9-1.9c.3-.5.6-1.1.7-1.7l2-.7Z"
+          />
+        </svg>
+      </button>
+      <span id="settingsHint" class="sr-only">설정을 열려면 2초 동안 계속 누르세요.</span>
+    </main>
+
+    <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+      <div class="settings-layout">
+        <header class="settings-header">
+          <div>
+            <p class="settings-eyebrow">보호자 전용</p>
+            <h1 id="settingsTitle">음악과 사진 등록</h1>
+            <p class="settings-description">
+              음악과 사진이 모두 등록된 칸만 주크박스 화면에 나타납니다.
+            </p>
+          </div>
+          <button id="closeSettings" class="icon-button" type="button" aria-label="설정 닫기">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m6.5 6.5 11 11m0-11-11 11" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="prototype-notice" role="note">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 8v4.5m0 3.5h.01M4.5 19h15L12 4 4.5 19Z" />
+          </svg>
+          <span>실험용 목업입니다. 새로고침하거나 앱을 닫으면 등록한 파일이 사라집니다.</span>
+        </div>
+
+        <section id="slotEditors" class="slot-editors" aria-label="음악 칸 설정"></section>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <div id="liveRegion" class="sr-only" aria-live="polite"></div>
+    <audio id="audioPlayer" preload="metadata"></audio>
+
+    <noscript>
+      <p class="noscript-message">이 앱을 사용하려면 브라우저에서 JavaScript를 켜야 합니다.</p>
+    </noscript>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

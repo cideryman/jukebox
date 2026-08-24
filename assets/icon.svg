@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">나의 주크박스</title>
+  <rect width="512" height="512" rx="112" fill="#0b1220"/>
+  <rect x="72" y="72" width="368" height="368" rx="76" fill="#18243a"/>
+  <circle cx="256" cy="256" r="122" fill="#58e6d2"/>
+  <circle cx="256" cy="256" r="72" fill="#0b1220"/>
+  <circle cx="256" cy="256" r="22" fill="#f5f8ff"/>
+  <path d="M332 112v120.5c0 33-26.8 59.8-59.8 59.8h-11.4v-42h11.4c9.8 0 17.8-8 17.8-17.8V112h42Z" fill="#f5f8ff"/>
+  <circle cx="238" cy="292" r="38" fill="#f5f8ff"/>
+</svg>
