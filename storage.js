@@ -8,11 +8,25 @@ const STORE_NAME = "slots";
 const MEDIA_DIR_NAME = "media";
 const TOTAL_SLOTS = 9;
 
-class JukeboxStorage {
-  constructor() {
+export class JukeboxStorage {
+  constructor({
+    dbName = DB_NAME,
+    dbVersion = DB_VERSION,
+    storeName = STORE_NAME,
+    mediaDirName = MEDIA_DIR_NAME,
+    totalSlots = TOTAL_SLOTS,
+    requestPersistence = true,
+  } = {}) {
+    this.dbName = dbName;
+    this.dbVersion = dbVersion;
+    this.storeName = storeName;
+    this.mediaDirName = mediaDirName;
+    this.totalSlots = totalSlots;
+    this.shouldRequestPersistence = requestPersistence;
     this.db = null;
     this.mediaDir = null;
     this.initialized = false;
+    this.initPromise = null;
     this.slotQueues = new Map(); // 슬롯별 직렬화 큐 (동시성 안전)
   }
 
@@ -26,19 +40,18 @@ class JukeboxStorage {
       resolveCurrent = resolve;
     });
 
-    this.slotQueues.set(
-      slotId,
-      prevPromise
-        .catch(() => {})
-        .then(() => currentPromise)
-    );
+    const queuedPromise = prevPromise
+      .catch(() => {})
+      .then(() => currentPromise);
+
+    this.slotQueues.set(slotId, queuedPromise);
 
     try {
       await prevPromise.catch(() => {});
       return await operation();
     } finally {
       resolveCurrent();
-      if (this.slotQueues.get(slotId) === currentPromise) {
+      if (this.slotQueues.get(slotId) === queuedPromise) {
         this.slotQueues.delete(slotId);
       }
     }
@@ -56,12 +69,12 @@ class JukeboxStorage {
         return;
       }
 
-      const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+      const request = window.indexedDB.open(this.dbName, this.dbVersion);
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName, { keyPath: "id" });
         }
       };
 
@@ -91,7 +104,7 @@ class JukeboxStorage {
     }
 
     const rootDir = await navigator.storage.getDirectory();
-    this.mediaDir = await rootDir.getDirectoryHandle(MEDIA_DIR_NAME, { create: true });
+    this.mediaDir = await rootDir.getDirectoryHandle(this.mediaDirName, { create: true });
     return this.mediaDir;
   }
 
@@ -178,8 +191,8 @@ class JukeboxStorage {
   async _getMetaFromDb(slotId) {
     const db = await this._openDatabase();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const store = tx.objectStore(STORE_NAME);
+      const tx = db.transaction(this.storeName, "readonly");
+      const store = tx.objectStore(this.storeName);
       const request = store.get(Number(slotId));
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
@@ -192,8 +205,8 @@ class JukeboxStorage {
   async _getAllMetaFromDb() {
     const db = await this._openDatabase();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const store = tx.objectStore(STORE_NAME);
+      const tx = db.transaction(this.storeName, "readonly");
+      const store = tx.objectStore(this.storeName);
       const request = store.getAll();
       request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
@@ -206,11 +219,21 @@ class JukeboxStorage {
   async _putMetaToDb(meta) {
     const db = await this._openDatabase();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
+      const tx = db.transaction(this.storeName, "readwrite");
+      const store = tx.objectStore(this.storeName);
       const request = store.put(meta);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      let requestResult;
+      const rejectTransaction = () => {
+        reject(tx.error || request.error || new Error("IndexedDB 메타데이터 저장 실패"));
+      };
+
+      request.onsuccess = () => {
+        requestResult = request.result;
+      };
+      request.onerror = rejectTransaction;
+      tx.onerror = rejectTransaction;
+      tx.onabort = rejectTransaction;
+      tx.oncomplete = () => resolve(requestResult);
     });
   }
 
@@ -220,11 +243,17 @@ class JukeboxStorage {
   async _deleteMetaFromDb(slotId) {
     const db = await this._openDatabase();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
+      const tx = db.transaction(this.storeName, "readwrite");
+      const store = tx.objectStore(this.storeName);
       const request = store.delete(Number(slotId));
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      const rejectTransaction = () => {
+        reject(tx.error || request.error || new Error("IndexedDB 메타데이터 삭제 실패"));
+      };
+
+      request.onerror = rejectTransaction;
+      tx.onerror = rejectTransaction;
+      tx.onabort = rejectTransaction;
+      tx.oncomplete = () => resolve();
     });
   }
 
@@ -268,18 +297,27 @@ class JukeboxStorage {
    */
   async init() {
     if (this.initialized) return;
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        await this._openDatabase();
+        await this._getMediaDir();
 
-    await this._openDatabase();
-    await this._getMediaDir();
+        if (this.shouldRequestPersistence && navigator.storage && navigator.storage.persist) {
+          try {
+            await navigator.storage.persist();
+          } catch {}
+        }
 
-    if (navigator.storage && navigator.storage.persist) {
-      try {
-        await navigator.storage.persist();
-      } catch {}
+        await this._cleanOrphanedFiles();
+        this.initialized = true;
+      })().catch((error) => {
+        this.initialized = false;
+        this.initPromise = null;
+        throw error;
+      });
     }
 
-    await this._cleanOrphanedFiles();
-    this.initialized = true;
+    await this.initPromise;
   }
 
   /**
@@ -292,7 +330,7 @@ class JukeboxStorage {
     const metaMap = new Map(metas.map((m) => [m.id, m]));
 
     const result = [];
-    for (let slotId = 1; slotId <= TOTAL_SLOTS; slotId++) {
+    for (let slotId = 1; slotId <= this.totalSlots; slotId++) {
       const meta = metaMap.get(slotId);
       if (!meta) {
         result.push({
@@ -402,9 +440,7 @@ class JukeboxStorage {
         updatedMeta.audioFileName = file.name;
         updatedMeta.audioMime = file.type;
         updatedMeta.audioPath = newOpfsFileName;
-        if (!updatedMeta.label) {
-          updatedMeta.label = file.name.replace(/\.[^/.]+$/, "").trim() || `${slotId}번 음악`;
-        }
+        updatedMeta.label = file.name.replace(/\.[^/.]+$/, "").trim() || `${slotId}번 음악`;
       } else {
         updatedMeta.imageFileName = file.name;
         updatedMeta.imageMime = file.type;

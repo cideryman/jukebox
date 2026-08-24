@@ -1,4 +1,4 @@
-const CACHE_NAME = "jukebox-shell-v2";
+const CACHE_NAME = "jukebox-shell-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -31,11 +31,16 @@ self.addEventListener("fetch", (event) => {
   if (requestUrl.origin !== self.location.origin) return;
 
   if (request.mode === "navigate") {
+    const shouldRefreshAppShell =
+      requestUrl.pathname.endsWith("/") || requestUrl.pathname.endsWith("/index.html");
+
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+          if (response.ok && shouldRefreshAppShell) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+          }
           return response;
         })
         .catch(() => caches.match("./index.html")),

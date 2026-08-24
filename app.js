@@ -14,6 +14,7 @@ const slots = Array.from({ length: SLOT_COUNT }, (_, index) => ({
   imageUrl: null,
   label: "",
   hasError: false,
+  hasPersistedData: false,
 }));
 
 const playback = {
@@ -22,6 +23,9 @@ const playback = {
   requestId: 0,
   errorSlotId: null,
 };
+
+// 진행 중인 저장 작업을 추적하여 빠른 연속 등록/재생 경쟁 상태 방지
+const savingSlots = new Set();
 
 const grid = document.querySelector("#jukeboxGrid");
 const slotEditors = document.querySelector("#slotEditors");
@@ -65,33 +69,38 @@ function renderJukebox() {
     const isActive = playback.activeSlotId === slot.id && playback.status === "playing";
     const isLoading = playback.activeSlotId === slot.id && playback.status === "loading";
     const hasError = playback.errorSlotId === slot.id;
-    const button = document.createElement("button");
+    const isSaving = savingSlots.has(slot.id); // 저장 중 상태 확인
 
+    const button = document.createElement("button");
     button.type = "button";
     button.className = "track-tile";
     button.dataset.slotId = String(slot.id);
-    button.disabled = !ready;
+
+    // 저장 중이거나 준비되지 않았으면 버튼 비활성화 (경쟁 상태 방지)
+    button.disabled = !ready || isSaving;
     button.classList.toggle("is-empty", !ready);
     button.classList.toggle("is-active", isActive || isLoading);
-    button.classList.toggle("is-loading", isLoading);
+    button.classList.toggle("is-loading", isLoading || isSaving);
     button.classList.toggle("is-error", hasError);
     button.setAttribute("aria-label", `${slot.id}번 음악 ${isActive ? "정지" : "재생"}`);
     button.setAttribute("aria-pressed", String(isActive));
 
-    if (ready) {
-      const image = document.createElement("img");
-      image.className = "track-image";
-      image.src = slot.imageUrl;
-      image.alt = "";
-      image.draggable = false;
-      button.append(image);
+    if (ready || isSaving) {
+      if (slot.imageUrl) {
+        const image = document.createElement("img");
+        image.className = "track-image";
+        image.src = slot.imageUrl;
+        image.alt = "";
+        image.draggable = false;
+        button.append(image);
+      }
 
       const shade = document.createElement("span");
       shade.className = "track-shade";
       shade.setAttribute("aria-hidden", "true");
       button.append(shade);
 
-      if (isActive || isLoading) {
+      if (isActive || isLoading || isSaving) {
         const mark = document.createElement("span");
         mark.className = "playback-mark";
         mark.setAttribute("aria-hidden", "true");
@@ -110,6 +119,7 @@ function renderSettings() {
 
   slots.forEach((slot) => {
     const ready = isSlotReady(slot);
+    const isSaving = savingSlots.has(slot.id); // 저장 중 상태 확인
     const editor = document.createElement("article");
     editor.className = "slot-editor";
     editor.dataset.slotId = String(slot.id);
@@ -138,7 +148,10 @@ function renderSettings() {
     title.textContent = `${slot.id}번 칸`;
     const statusText = document.createElement("span");
 
-    if (ready) {
+    if (isSaving) {
+      statusText.className = "is-ready";
+      statusText.textContent = "저장 중...";
+    } else if (ready) {
       statusText.className = "is-ready";
       statusText.textContent = "사용 가능";
     } else if (slot.hasError) {
@@ -158,9 +171,11 @@ function renderSettings() {
 
     const actions = document.createElement("div");
     actions.className = "slot-actions";
+
+    // 저장 중일 때 파일 선택 방지
     actions.append(
-      createFileAction(slot.id, "audio", "음악 선택", "audio/*"),
-      createFileAction(slot.id, "image", "사진 선택", "image/*"),
+      createFileAction(slot.id, "audio", "음악 선택", "audio/*", isSaving),
+      createFileAction(slot.id, "image", "사진 선택", "image/*", isSaving),
     );
 
     const deleteButton = document.createElement("button");
@@ -170,7 +185,9 @@ function renderSettings() {
     deleteButton.dataset.slotId = String(slot.id);
     deleteButton.textContent = "이 칸 비우기";
     const hasAnyContent = Boolean(slot.audioFile || slot.imageFile || slot.audioFileName || slot.imageFileName);
-    deleteButton.disabled = !hasAnyContent;
+
+    // 저장 중이거나 비어있으면 삭제 버튼 비활성화
+    deleteButton.disabled = !hasAnyContent || isSaving;
     actions.append(deleteButton);
 
     body.append(status, summary, actions);
@@ -181,13 +198,18 @@ function renderSettings() {
   slotEditors.replaceChildren(fragment);
 }
 
-function createFileAction(slotId, kind, text, accept) {
+function createFileAction(slotId, kind, text, accept, disabled = false) {
   const label = document.createElement("label");
   label.className = "file-action";
+  if (disabled) {
+    label.style.opacity = "0.5";
+    label.style.pointerEvents = "none";
+  }
 
   const input = document.createElement("input");
   input.type = "file";
   input.accept = accept;
+  input.disabled = disabled;
   input.dataset.slotId = String(slotId);
   input.dataset.kind = kind;
   input.setAttribute("aria-label", `${slotId}번 칸 ${text}`);
@@ -325,10 +347,32 @@ async function registerFile(slotId, kind, file) {
     return;
   }
 
+  // 파일 등록 시작 시 재생 중이면 정지
   if (playback.activeSlotId === slot.id) stopPlayback({ announceStop: false });
 
+  // 슬롯 잠금 (경쟁 상태 방지)
+  savingSlots.add(slotId);
+  renderAll();
+
   try {
-    const updated = await storage.saveSlotFile(slotId, kind, file);
+    let updated;
+    let savedPersistently = true;
+    try {
+      // 영구 저장소 기록 시도
+      updated = await storage.saveSlotFile(slotId, kind, file);
+    } catch (storageError) {
+      savedPersistently = false;
+      console.warn("영구 저장 실패, 인메모리 대체를 시도합니다:", storageError);
+      // 저장 공간 부족 등 OPFS 접근 불가 시, 인메모리 동작 보장 (사용자 경험 계약)
+      updated = {
+        audioFile: kind === "audio" ? file : slot.audioFile,
+        audioFileName: kind === "audio" ? file.name : slot.audioFileName,
+        imageFile: kind === "image" ? file : slot.imageFile,
+        imageFileName: kind === "image" ? file.name : slot.imageFileName,
+        label: kind === "audio" ? getFileLabel(file.name) : slot.label,
+      };
+      showToast("저장 공간 문제로 임시 등록되었습니다. 앱 종료 시 초기화됩니다.");
+    }
 
     if (kind === "audio") {
       if (slot.audioUrl) URL.revokeObjectURL(slot.audioUrl);
@@ -344,12 +388,16 @@ async function registerFile(slotId, kind, file) {
     }
 
     slot.hasError = false;
-    renderAll();
-    updateStorageInfo();
+    if (savedPersistently) slot.hasPersistedData = true;
     announce(`${slot.id}번 칸에 ${kind === "audio" ? "음악" : "사진"}을 등록했습니다.`);
   } catch (error) {
-    console.error("파일 저장 실패:", error);
-    showToast("파일 저장에 실패했습니다. 기기 저장 공간을 확인해 주세요.");
+    console.error("파일 등록 처리 실패:", error);
+    showToast("파일 등록에 실패했습니다. 다시 시도해 주세요.");
+  } finally {
+    // 슬롯 잠금 해제 및 상태 갱신
+    savingSlots.delete(slotId);
+    renderAll();
+    updateStorageInfo();
   }
 }
 
@@ -361,8 +409,12 @@ async function clearSlot(slotId) {
   if (!window.confirm(`${slot.id}번 칸의 음악과 사진을 모두 지울까요?`)) return;
   if (playback.activeSlotId === slot.id) stopPlayback({ announceStop: false });
 
+  // 슬롯 잠금 (경쟁 상태 방지)
+  savingSlots.add(slotId);
+  renderAll();
+
   try {
-    await storage.removeSlot(slotId);
+    if (slot.hasPersistedData) await storage.removeSlot(slotId);
 
     if (slot.audioUrl) URL.revokeObjectURL(slot.audioUrl);
     if (slot.imageUrl) URL.revokeObjectURL(slot.imageUrl);
@@ -376,14 +428,18 @@ async function clearSlot(slotId) {
       imageUrl: null,
       label: "",
       hasError: false,
+      hasPersistedData: false,
     });
 
-    renderAll();
-    updateStorageInfo();
     announce(`${slot.id}번 칸을 비웠습니다.`);
   } catch (error) {
     console.error("슬롯 삭제 실패:", error);
-    showToast("칸 비우기에 실패했습니다.");
+    showToast("칸을 비우지 못했습니다. 다시 시도해 주세요.");
+    announce(`${slot.id}번 칸을 비우지 못했습니다.`);
+  } finally {
+    savingSlots.delete(slotId);
+    renderAll();
+    updateStorageInfo();
   }
 }
 
@@ -493,6 +549,9 @@ async function loadPersistedSlots() {
     await storage.init();
     const persistedList = await storage.listSlots();
 
+    // 복원에 성공한 경우에만 기존 URL을 폐기해 실패 시 현재 세션을 보존한다.
+    revokeAllObjectUrls();
+
     persistedList.forEach((persisted) => {
       const slot = getSlot(persisted.id);
       if (!slot) return;
@@ -507,6 +566,7 @@ async function loadPersistedSlots() {
 
       slot.label = persisted.label || (slot.audioFileName ? getFileLabel(slot.audioFileName) : "");
       slot.hasError = Boolean(persisted.error);
+      slot.hasPersistedData = Boolean(persisted.audioPath || persisted.imagePath);
     });
   } catch (err) {
     console.error("저장소 복원 중 오류 발생:", err);

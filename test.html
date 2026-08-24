@@ -55,7 +55,16 @@
     <div id="results">테스트 실행 중...</div>
 
     <script type="module">
-      import { storage } from "./storage.js";
+      import { JukeboxStorage } from "./storage.js";
+
+      const TEST_DB_NAME = "jukebox_test_db";
+      const TEST_MEDIA_DIR_NAME = "media-test";
+      const EXPECTED_CACHE_NAME = "jukebox-shell-v4";
+      const storage = new JukeboxStorage({
+        dbName: TEST_DB_NAME,
+        mediaDirName: TEST_MEDIA_DIR_NAME,
+        requestPersistence: false,
+      });
 
       const resultsContainer = document.getElementById("results");
       const testResults = [];
@@ -113,12 +122,37 @@
         }
       }
 
+      async function deleteTestDatabase() {
+        await new Promise((resolve, reject) => {
+          const request = indexedDB.deleteDatabase(TEST_DB_NAME);
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error || new Error("테스트 DB 삭제 실패"));
+          request.onblocked = () => reject(new Error("테스트 DB가 다른 탭에서 사용 중입니다."));
+        });
+      }
+
+      async function deleteTestMediaDirectory() {
+        if (!navigator.storage?.getDirectory) return;
+        const root = await navigator.storage.getDirectory();
+        try {
+          await root.removeEntry(TEST_MEDIA_DIR_NAME, { recursive: true });
+        } catch (error) {
+          if (error.name !== "NotFoundError") throw error;
+        }
+      }
+
+      async function resetTestStorage() {
+        await deleteTestDatabase();
+        await deleteTestMediaDirectory();
+      }
+
       async function runAllTests() {
         console.log("주크박스 자동 검증 시작...");
 
         // 1. 초기화 및 OPFS / IndexedDB 연결
         await runTest("1. storage.init() 초기화 및 IDB/OPFS 연결", async () => {
-          await storage.init();
+          await resetTestStorage();
+          await Promise.all([storage.init(), storage.init(), storage.init()]);
           assert(storage.initialized, "storage가 초기화되어야 함");
           assert(storage.db !== null, "IndexedDB 연결이 생성되어야 함");
           assert(storage.mediaDir !== null, "OPFS mediaDir 핸들이 생성되어야 함");
@@ -258,6 +292,8 @@
 
           const finalMeta = await storage._getMetaFromDb(4);
           assert(finalMeta.audioFileName === "quickC.wav", "마지막 작업(quickC)의 결과가 유지되어야 함");
+          assert(finalMeta.label === "quickC", "음원 교체 시 Media Session 곡명도 갱신되어야 함");
+          assert(!storage.slotQueues.has(4), "완료된 슬롯 큐는 메모리에서 정리되어야 함");
         });
 
         // 9. 고아 파일 정리 (Garbage Collection on init)
@@ -269,9 +305,8 @@
           await writable.write(new Uint8Array([1, 2, 3]));
           await writable.close();
 
-          // init() 다시 호출하여 정리 트리거
-          storage.initialized = false;
-          await storage.init();
+          // 고아 파일 정리를 직접 실행
+          await storage._cleanOrphanedFiles();
 
           let orphanStillExists = false;
           try {
@@ -281,12 +316,45 @@
           assert(!orphanStillExists, "고아 파일이 정상적으로 정리되어야 함");
         });
 
-        // 10. Service Worker 캐시 목록 검증
-        await runTest("10. Service Worker 캐시 스토리지 확인", async () => {
-          if ("caches" in window) {
-            const keys = await caches.keys();
-            console.log("Caches found:", keys);
-            assert(keys.length >= 0, "CacheStorage API 정상 작동");
+        // 10. Service Worker 활성화 및 앱 셸 캐시 검증
+        await runTest("10. Service Worker 활성화 및 앱 셸 캐시 확인", async () => {
+          assert("serviceWorker" in navigator, "Service Worker API를 지원해야 함");
+          assert("caches" in window, "CacheStorage API를 지원해야 함");
+
+          const registration = await navigator.serviceWorker.register("./sw.js");
+          await registration.update();
+          const pendingWorker = registration.installing || registration.waiting;
+          if (pendingWorker && pendingWorker.state !== "activated") {
+            await new Promise((resolve, reject) => {
+              const checkState = () => {
+                if (pendingWorker.state === "activated") resolve();
+                if (pendingWorker.state === "redundant") {
+                  reject(new Error("새 Service Worker 활성화 실패"));
+                }
+              };
+              pendingWorker.addEventListener("statechange", checkState);
+              checkState();
+            });
+          }
+
+          await navigator.serviceWorker.ready;
+          assert(registration.active, "활성 Service Worker가 있어야 함");
+          assert(
+            registration.active.scriptURL.endsWith("/sw.js"),
+            "활성 Service Worker가 sw.js를 사용해야 함"
+          );
+
+          let keys = await caches.keys();
+          for (let attempt = 0; attempt < 50 && !keys.includes(EXPECTED_CACHE_NAME); attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            keys = await caches.keys();
+          }
+          assert(keys.includes(EXPECTED_CACHE_NAME), `${EXPECTED_CACHE_NAME} 캐시가 있어야 함`);
+
+          const cache = await caches.open(EXPECTED_CACHE_NAME);
+          for (const path of ["./index.html", "./app.js", "./storage.js", "./styles.css"]) {
+            const response = await cache.match(path);
+            assert(response, `${path}가 앱 셸 캐시에 있어야 함`);
           }
         });
 
