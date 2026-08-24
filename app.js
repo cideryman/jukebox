@@ -1,8 +1,11 @@
 import { storage } from "./storage.js";
+import { normalizeFileForKind } from "./file-types.js";
 
 const SLOT_COUNT = 9;
 const HOLD_DURATION_MS = 2000;
 const ERROR_DISPLAY_MS = 1800;
+const AUDIO_ACCEPT = "audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac";
+const IMAGE_ACCEPT = "image/*,.jpg,.jpeg,.png,.webp,.gif";
 
 const slots = Array.from({ length: SLOT_COUNT }, (_, index) => ({
   id: index + 1,
@@ -34,6 +37,7 @@ const settingsDialog = document.querySelector("#settingsDialog");
 const closeSettingsButton = document.querySelector("#closeSettings");
 const audio = document.querySelector("#audioPlayer");
 const toast = document.querySelector("#toast");
+const settingsFeedback = document.querySelector("#settingsFeedback");
 const liveRegion = document.querySelector("#liveRegion");
 
 let holdTimer = null;
@@ -174,8 +178,8 @@ function renderSettings() {
 
     // 저장 중일 때 파일 선택 방지
     actions.append(
-      createFileAction(slot.id, "audio", "음악 선택", "audio/*", isSaving),
-      createFileAction(slot.id, "image", "사진 선택", "image/*", isSaving),
+      createFileAction(slot.id, "audio", "음악 선택", AUDIO_ACCEPT, isSaving),
+      createFileAction(slot.id, "image", "사진 선택", IMAGE_ACCEPT, isSaving),
     );
 
     const deleteButton = document.createElement("button");
@@ -341,11 +345,16 @@ async function registerFile(slotId, kind, file) {
   const slot = getSlot(slotId);
   if (!slot || !file) return;
 
-  const expectedType = kind === "audio" ? "audio/" : "image/";
-  if (!file.type.startsWith(expectedType)) {
-    showToast(kind === "audio" ? "음악 파일을 선택해 주세요." : "사진 파일을 선택해 주세요.");
+  const normalizedFile = normalizeFileForKind(file, kind);
+  if (!normalizedFile) {
+    showToast(
+      kind === "audio"
+        ? "음악 파일을 인식하지 못했습니다. MP3, M4A, WAV 파일을 선택해 주세요."
+        : "사진 파일을 인식하지 못했습니다. JPG, PNG 파일을 선택해 주세요.",
+    );
     return;
   }
+  file = normalizedFile;
 
   // 파일 등록 시작 시 재생 중이면 정지
   if (playback.activeSlotId === slot.id) stopPlayback({ announceStop: false });
@@ -505,6 +514,7 @@ function cancelSettingsHold() {
 }
 
 function openSettings() {
+  if (settingsFeedback) settingsFeedback.hidden = true;
   renderSettings();
   updateStorageInfo();
   if (!settingsDialog.open) settingsDialog.showModal();
@@ -520,8 +530,13 @@ function showToast(message) {
   window.clearTimeout(toastTimer);
   toast.textContent = message;
   toast.hidden = false;
+  if (settingsDialog.open && settingsFeedback) {
+    settingsFeedback.textContent = message;
+    settingsFeedback.hidden = false;
+  }
   toastTimer = window.setTimeout(() => {
     toast.hidden = true;
+    if (settingsFeedback) settingsFeedback.hidden = true;
   }, 3200);
 }
 
