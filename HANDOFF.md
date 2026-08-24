@@ -17,7 +17,7 @@
 - 1차 워크스루 커밋: `af6fb19`
 - Antigravity의 2차 자체 검토 변경과 Codex의 데이터 안전 수정은 현재 코드에 통합했다.
 - 기존 `WALKTHROUGH.md`는 `walkthrough/1.md`로 이동했으며, 후속 결과는 번호를 붙여 보관한다.
-- 데이터 안전 수정은 `walkthrough/3.md`, 모바일 파일 등록 수정은 `walkthrough/4.md`, 설정 종료 UI 변경은 `walkthrough/5.md`를 확인한다.
+- 데이터 안전 수정은 `walkthrough/3.md`, 모바일 파일 등록 수정은 `walkthrough/4.md`, 설정 종료 UI 변경은 `walkthrough/5.md`, 파일 내용 판별 보완은 `walkthrough/6.md`를 확인한다.
 
 후속 작업자는 기존 변경을 초기화하거나 덮어쓰지 말고 현재 작업 트리부터 확인한다.
 

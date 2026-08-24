@@ -349,7 +349,7 @@ async function registerFile(slotId, kind, file) {
   const slot = getSlot(slotId);
   if (!slot || !file) return;
 
-  const normalizedFile = normalizeFileForKind(file, kind);
+  const normalizedFile = await normalizeFileForKind(file, kind);
   if (!normalizedFile) {
     showToast(
       kind === "audio"

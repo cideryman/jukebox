@@ -60,7 +60,7 @@
 
       const TEST_DB_NAME = "jukebox_test_db";
       const TEST_MEDIA_DIR_NAME = "media-test";
-      const EXPECTED_CACHE_NAME = "jukebox-shell-v6";
+      const EXPECTED_CACHE_NAME = "jukebox-shell-v7";
       const storage = new JukeboxStorage({
         dbName: TEST_DB_NAME,
         mediaDirName: TEST_MEDIA_DIR_NAME,
@@ -360,21 +360,28 @@
         });
 
         // 11. 모바일 파일 선택기의 비어 있거나 일반적인 MIME 보완
-        await runTest("11. 모바일 MIME 누락 시 확장자로 음악/사진 형식 복원", async () => {
+        await runTest("11. 모바일 MIME·확장자 누락 시 파일 내용으로 형식 복원", async () => {
           const mobileMp3 = new File([new Uint8Array([1, 2, 3])], "mobile-song.MP3", { type: "" });
-          const normalizedMp3 = normalizeFileForKind(mobileMp3, "audio");
+          const normalizedMp3 = await normalizeFileForKind(mobileMp3, "audio");
           assert(normalizedMp3 instanceof File, "MIME이 빈 MP3를 File로 유지해야 함");
           assert(normalizedMp3.type === "audio/mpeg", "MP3 MIME을 audio/mpeg로 복원해야 함");
 
           const mobileJpeg = new File([new Uint8Array([1, 2, 3])], "mobile-photo.jpeg", {
             type: "application/octet-stream",
           });
-          const normalizedJpeg = normalizeFileForKind(mobileJpeg, "image");
+          const normalizedJpeg = await normalizeFileForKind(mobileJpeg, "image");
           assert(normalizedJpeg instanceof File, "일반 MIME의 JPEG를 File로 유지해야 함");
           assert(normalizedJpeg.type === "image/jpeg", "JPEG MIME을 image/jpeg로 복원해야 함");
 
           const invalidFile = new File([new Uint8Array([1])], "not-a-song.txt", { type: "text/plain" });
-          assert(normalizeFileForKind(invalidFile, "audio") === null, "지원하지 않는 확장자는 거부해야 함");
+          assert((await normalizeFileForKind(invalidFile, "audio")) === null, "지원하지 않는 확장자는 거부해야 함");
+
+          const samsungMp3 = new File([new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00, 0x00])], "선택한 파일", {
+            type: "application/octet-stream",
+          });
+          const normalizedSamsungMp3 = await normalizeFileForKind(samsungMp3, "audio");
+          assert(normalizedSamsungMp3 instanceof File, "확장자와 MIME이 없는 ID3 MP3도 인식해야 함");
+          assert(normalizedSamsungMp3.type === "audio/mpeg", "파일 내용으로 MP3 MIME을 복원해야 함");
         });
 
         // 결과 렌더링
