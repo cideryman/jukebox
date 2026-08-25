@@ -11,7 +11,12 @@ const STORE_NAME = "slots";
 const SETTINGS_STORE_NAME = "settings";
 const STATS_STORE_NAME = "stats";
 const MEDIA_DIR_NAME = "media";
-const TOTAL_SLOTS = 9;
+const TOTAL_SLOTS = 27;
+
+export function normalizeScreenId(value) {
+  const parsed = Number(value);
+  return parsed === 2 || parsed === 3 ? parsed : 1;
+}
 
 function createTrackId() {
   return typeof crypto.randomUUID === "function"
@@ -917,6 +922,7 @@ export class JukeboxStorage {
           key: "app-settings",
           maxVolume: normalizeMaxVolume(settings?.maxVolume),
           wakeLockMode: normalizeWakeLockMode(settings?.wakeLockMode),
+          currentScreen: normalizeScreenId(settings?.currentScreen),
           updatedAt: Date.now(),
         });
         const statsStore = tx.objectStore(this.statsStoreName);
@@ -952,22 +958,30 @@ export class JukeboxStorage {
     return {
       maxVolume: normalizeMaxVolume(stored?.maxVolume),
       wakeLockMode: normalizeWakeLockMode(stored?.wakeLockMode),
+      currentScreen: normalizeScreenId(stored?.currentScreen),
     };
   }
 
-  async saveSettings({ maxVolume, wakeLockMode } = {}) {
+  async saveSettings({ maxVolume, wakeLockMode, currentScreen } = {}) {
     await this.init();
     const current = await this.getSettings();
     const normalizedVolume = maxVolume !== undefined ? normalizeMaxVolume(maxVolume) : current.maxVolume;
     const normalizedWakeLock =
       wakeLockMode !== undefined ? normalizeWakeLockMode(wakeLockMode) : current.wakeLockMode;
+    const normalizedScreen =
+      currentScreen !== undefined ? normalizeScreenId(currentScreen) : current.currentScreen;
     await this._putSettingsToDb({
       key: "app-settings",
       maxVolume: normalizedVolume,
       wakeLockMode: normalizedWakeLock,
+      currentScreen: normalizedScreen,
       updatedAt: Date.now(),
     });
-    return { maxVolume: normalizedVolume, wakeLockMode: normalizedWakeLock };
+    return {
+      maxVolume: normalizedVolume,
+      wakeLockMode: normalizedWakeLock,
+      currentScreen: normalizedScreen,
+    };
   }
 
   /**

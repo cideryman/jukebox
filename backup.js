@@ -2,7 +2,7 @@ const ZIP_LOCAL_SIGNATURE = 0x04034b50;
 const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
 const ZIP_END_SIGNATURE = 0x06054b50;
 const UTF8_FLAG = 0x0800;
-const MAX_ENTRY_COUNT = 64;
+const MAX_ENTRY_COUNT = 128;
 const MAX_ARCHIVE_SIZE = 0xffffffff;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -125,14 +125,14 @@ function validateManifest(manifest, entries) {
   if (!manifest || manifest.format !== "jukebox-backup" || manifest.formatVersion !== 1) {
     throw new Error("지원하지 않는 주크박스 백업 형식입니다.");
   }
-  if (!Array.isArray(manifest.slots) || manifest.slots.length > 9) {
+  if (!Array.isArray(manifest.slots) || manifest.slots.length > 27) {
     throw new Error("백업의 슬롯 정보가 올바르지 않습니다.");
   }
 
   const slotIds = new Set();
   const trackIds = new Map();
   for (const slot of manifest.slots) {
-    if (!Number.isInteger(slot.id) || slot.id < 1 || slot.id > 9 || slotIds.has(slot.id)) {
+    if (!Number.isInteger(slot.id) || slot.id < 1 || slot.id > 27 || slotIds.has(slot.id)) {
       throw new Error("백업에 중복되거나 잘못된 슬롯이 있습니다.");
     }
     slotIds.add(slot.id);
@@ -151,7 +151,7 @@ function validateManifest(manifest, entries) {
     }
   }
 
-  if (!Array.isArray(manifest.stats) || manifest.stats.length > 9) {
+  if (!Array.isArray(manifest.stats) || manifest.stats.length > 27) {
     throw new Error("백업의 재생 통계가 올바르지 않습니다.");
   }
   for (const stat of manifest.stats) {
@@ -225,6 +225,7 @@ export async function createBackupArchive({ slots, settings, stats = [] }) {
     appSettings: {
       maxVolume: settings?.maxVolume ?? 100,
       wakeLockMode: settings?.wakeLockMode ?? "playing",
+      currentScreen: settings?.currentScreen ?? 1,
     },
     slots: manifestSlots,
     stats: backupStats,
@@ -374,6 +375,7 @@ export async function readBackupArchive(file) {
     settings: {
       maxVolume: manifest.appSettings?.maxVolume ?? 100,
       wakeLockMode: manifest.appSettings?.wakeLockMode ?? "playing",
+      currentScreen: manifest.appSettings?.currentScreen ?? 1,
     },
     stats: manifest.stats.map((stat) => ({
       trackId: stat.trackId,

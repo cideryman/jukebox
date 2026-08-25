@@ -65,7 +65,7 @@
 
       const TEST_DB_NAME = "jukebox_test_db";
       const TEST_MEDIA_DIR_NAME = "media-test";
-      const EXPECTED_CACHE_NAME = "jukebox-shell-v16";
+      const EXPECTED_CACHE_NAME = "jukebox-shell-v18";
       const storage = new JukeboxStorage({
         dbName: TEST_DB_NAME,
         mediaDirName: TEST_MEDIA_DIR_NAME,
@@ -212,9 +212,9 @@
 
         // 3. listSlots 복원 검증
         let loadedSlots;
-        await runTest("3. listSlots() 호출 시 1~9번 슬롯 복원 및 File 객체 재구성", async () => {
+        await runTest("3. listSlots() 호출 시 1~27번 슬롯 복원 및 File 객체 재구성", async () => {
           loadedSlots = await storage.listSlots();
-          assert(loadedSlots.length === 9, "총 9개 슬롯 반환");
+          assert(loadedSlots.length === 27, "총 27개 슬롯 반환");
 
           const slot1 = loadedSlots.find(s => s.id === 1);
           assert(slot1.audioFile instanceof File, "슬롯 1 audioFile이 File 인스턴스여야 함");
@@ -892,6 +892,37 @@
           const backupArchive = await createBackupArchive(await storage.createBackupSnapshot());
           const backupData = await readBackupArchive(backupArchive);
           assert(backupData.settings.wakeLockMode === "system", "백업에 wakeLockMode가 포함되어야 함");
+        });
+
+        // 22. 다중 화면 세트(화면 1, 2, 3) 설정 저장·복원·정규화
+        await runTest("22. 다중 화면 세트(화면 1, 2, 3) 설정 저장·정규화·백업 왕복", async () => {
+          const defaultSettings = await storage.getSettings();
+          assert(defaultSettings.currentScreen === 1, "기본 currentScreen은 1이어야 함");
+
+          const updated = await storage.saveSettings({ currentScreen: 2 });
+          assert(updated.currentScreen === 2, "화면 2로 저장되어야 함");
+
+          const reloaded = await storage.getSettings();
+          assert(reloaded.currentScreen === 2, "저장된 화면 2가 로드되어야 함");
+
+          // 3번 화면 테스트
+          await storage.saveSettings({ currentScreen: 3 });
+          const reloaded3 = await storage.getSettings();
+          assert(reloaded3.currentScreen === 3, "화면 3으로 전환되어야 함");
+
+          // 비정상적인 값 정규화 검증 (4는 1로 복구)
+          const normalized = await storage.saveSettings({ currentScreen: 99 });
+          assert(normalized.currentScreen === 1, "유효하지 않은 화면 번호는 1로 복구되어야 함");
+
+          // 백업 왕복 검증
+          await storage.saveSettings({ currentScreen: 2 });
+          const snapshot = await storage.createBackupSnapshot();
+          assert(snapshot.slots.length === 27, "스냅샷에 27개 슬롯이 포함되어야 함");
+          assert(snapshot.settings.currentScreen === 2, "스냅샷에 currentScreen이 포함되어야 함");
+
+          const archive = await createBackupArchive(snapshot);
+          const restoredData = await readBackupArchive(archive);
+          assert(restoredData.settings.currentScreen === 2, "백업 아카이브에서 currentScreen이 복원되어야 함");
         });
 
         // 결과 렌더링

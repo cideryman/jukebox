@@ -1,4 +1,4 @@
-import { storage } from "./storage.js";
+import { storage, normalizeScreenId } from "./storage.js";
 import { normalizeFileForKind } from "./file-types.js";
 import { extractEmbeddedArtwork } from "./album-art.js";
 import { applyVolumeLimit } from "./volume.js";
@@ -6,7 +6,7 @@ import { createBackupArchive, readBackupArchive } from "./backup.js";
 import { ActivationGuard, PointerGestureTracker } from "./interaction.js";
 import { WakeLockController, WAKE_LOCK_MODES, normalizeWakeLockMode } from "./wake-lock.js";
 
-const SLOT_COUNT = 9;
+const SLOT_COUNT = 27;
 const HOLD_DURATION_MS = 2000;
 const ERROR_DISPLAY_MS = 1800;
 const STATS_CHECKPOINT_MS = 30000;
@@ -53,6 +53,7 @@ const liveRegion = document.querySelector("#liveRegion");
 const maxVolumeRange = document.querySelector("#maxVolumeRange");
 const maxVolumeValue = document.querySelector("#maxVolumeValue");
 const wakeLockRadios = document.querySelectorAll('input[name="wakeLockMode"]');
+const screenSelectionRadios = document.querySelectorAll('input[name="currentScreen"]');
 const updateAppCacheButton = document.querySelector("#updateAppCache");
 const exportBackupButton = document.querySelector("#exportBackup");
 const importBackupInput = document.querySelector("#importBackup");
@@ -68,6 +69,8 @@ let maxVolume = 100;
 let persistedMaxVolume = 100;
 let wakeLockMode = WAKE_LOCK_MODES.PLAYING;
 let persistedWakeLockMode = WAKE_LOCK_MODES.PLAYING;
+let currentScreen = 1;
+let persistedCurrentScreen = 1;
 let settingsSaving = false;
 let maintenanceBusy = false;
 let maintenanceAction = "";
@@ -197,6 +200,34 @@ function applyWakeLockMode(value) {
   });
 }
 
+function applyCurrentScreen(value) {
+  currentScreen = normalizeScreenId(value);
+  screenSelectionRadios.forEach((radio) => {
+    radio.checked = Number(radio.value) === currentScreen;
+  });
+}
+
+async function persistCurrentScreen(value) {
+  const normalized = normalizeScreenId(value);
+  applyCurrentScreen(normalized);
+  renderAll();
+  settingsSaving = true;
+  renderSettings();
+  try {
+    const saved = await storage.saveSettings({ currentScreen: normalized });
+    persistedCurrentScreen = saved.currentScreen;
+    applyCurrentScreen(saved.currentScreen);
+    announce(`화면 ${saved.currentScreen} 세트로 변경되었습니다.`);
+  } catch (error) {
+    console.error("화면 세트 설정 저장 실패:", error);
+    applyCurrentScreen(persistedCurrentScreen);
+    showToast("화면 세트 설정을 저장하지 못했습니다. 다시 시도해 주세요.");
+  } finally {
+    settingsSaving = false;
+    renderAll();
+  }
+}
+
 async function persistWakeLockMode(value) {
   const normalized = normalizeWakeLockMode(value);
   applyWakeLockMode(normalized);
@@ -254,8 +285,10 @@ async function updateAppCache() {
 
 function renderJukebox() {
   const fragment = document.createDocumentFragment();
+  const startIndex = (currentScreen - 1) * 9;
+  const currentSlots = slots.slice(startIndex, startIndex + 9);
 
-  slots.forEach((slot) => {
+  currentSlots.forEach((slot) => {
     const ready = isSlotReady(slot);
     const isActive = playback.activeSlotId === slot.id && playback.status === "playing";
     const isLoading = playback.activeSlotId === slot.id && playback.status === "loading";
@@ -320,6 +353,10 @@ function renderSettings() {
     radio.checked = radio.value === wakeLockMode;
     radio.disabled = settingsSaving || maintenanceBusy;
   });
+  screenSelectionRadios.forEach((radio) => {
+    radio.checked = Number(radio.value) === currentScreen;
+    radio.disabled = settingsSaving || maintenanceBusy;
+  });
   if (updateAppCacheButton) {
     updateAppCacheButton.disabled = maintenanceBusy || settingsSaving || savingSlots.size > 0;
     updateAppCacheButton.textContent =
@@ -330,7 +367,10 @@ function renderSettings() {
   importBackupInput.disabled = maintenanceBusy || settingsSaving || savingSlots.size > 0;
   importBackupLabel.classList.toggle("is-disabled", importBackupInput.disabled);
 
-  slots.forEach((slot) => {
+  const startIndex = (currentScreen - 1) * 9;
+  const currentSlots = slots.slice(startIndex, startIndex + 9);
+
+  currentSlots.forEach((slot) => {
     const ready = isSlotReady(slot);
     const isSaving = savingSlots.has(slot.id) || maintenanceBusy; // 저장·복원 중 상태 확인
     const editor = document.createElement("article");
@@ -970,6 +1010,8 @@ async function loadPersistedSlots() {
     applyMaxVolume(persistedSettings.maxVolume);
     persistedWakeLockMode = persistedSettings.wakeLockMode;
     applyWakeLockMode(persistedSettings.wakeLockMode);
+    persistedCurrentScreen = persistedSettings.currentScreen;
+    applyCurrentScreen(persistedSettings.currentScreen);
     playbackStats.clear();
     persistedStats.forEach((record) => playbackStats.set(record.trackId, record));
 
@@ -1079,6 +1121,11 @@ maxVolumeRange.addEventListener("change", persistMaxVolume);
 wakeLockRadios.forEach((radio) => {
   radio.addEventListener("change", () => {
     if (radio.checked) persistWakeLockMode(radio.value);
+  });
+});
+screenSelectionRadios.forEach((radio) => {
+  radio.addEventListener("change", () => {
+    if (radio.checked) persistCurrentScreen(Number(radio.value));
   });
 });
 if (updateAppCacheButton) {
