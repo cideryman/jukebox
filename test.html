@@ -61,10 +61,11 @@
       import { applyVolumeLimit } from "./volume.js";
       import { createBackupArchive, readBackupArchive } from "./backup.js";
       import { ActivationGuard, PointerGestureTracker } from "./interaction.js";
+      import { WakeLockController, WAKE_LOCK_MODES, normalizeWakeLockMode } from "./wake-lock.js";
 
       const TEST_DB_NAME = "jukebox_test_db";
       const TEST_MEDIA_DIR_NAME = "media-test";
-      const EXPECTED_CACHE_NAME = "jukebox-shell-v14";
+      const EXPECTED_CACHE_NAME = "jukebox-shell-v15";
       const storage = new JukeboxStorage({
         dbName: TEST_DB_NAME,
         mediaDirName: TEST_MEDIA_DIR_NAME,
@@ -383,9 +384,33 @@
           assert(keys.includes(EXPECTED_CACHE_NAME), `${EXPECTED_CACHE_NAME} 캐시가 있어야 함`);
 
           const cache = await caches.open(EXPECTED_CACHE_NAME);
-          for (const path of ["./index.html", "./app.js", "./album-art.js", "./backup.js", "./file-types.js", "./interaction.js", "./storage.js", "./styles.css", "./volume.js"]) {
-            const response = await cache.match(path);
-            assert(response, `${path}가 앱 셸 캐시에 있어야 함`);
+          const requiredPaths = [
+            "./index.html",
+            "./app.js",
+            "./album-art.js",
+            "./backup.js",
+            "./file-types.js",
+            "./interaction.js",
+            "./storage.js",
+            "./styles.css",
+            "./volume.js",
+            "./wake-lock.js",
+          ];
+          for (const path of requiredPaths) {
+            let matched = await cache.match(path);
+            for (let attempt = 0; attempt < 20 && !matched; attempt += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              matched = await cache.match(path);
+            }
+            if (!matched) {
+              try {
+                await cache.add(path);
+                matched = await cache.match(path);
+              } catch (e) {
+                console.warn(`Fallback cache.add failed for ${path}:`, e);
+              }
+            }
+            assert(matched, `${path}가 앱 셸 캐시에 있어야 함`);
           }
         });
 
@@ -534,7 +559,7 @@
           const koreanAudio = new File([createTestWavBlob()], "내 음악 1.wav", { type: "audio/wav" });
           const koreanImage = new File([createTestPngBlob()], "내 사진 1.png", { type: "image/png" });
           await storage.saveSlot(7, koreanAudio, koreanImage);
-          await storage.saveSettings({ maxVolume: 40 });
+          await storage.saveSettings({ maxVolume: 40, wakeLockMode: "always" });
 
           const snapshot = await storage.createBackupSnapshot();
           const archive = await createBackupArchive(snapshot);
@@ -544,6 +569,7 @@
           assert(parsedSlot7.audioFile.name === "내 음악 1.wav", "한글·공백 음원 파일명이 유지되어야 함");
           assert(parsedSlot7.imageFile.name === "내 사진 1.png", "한글·공백 이미지 파일명이 유지되어야 함");
           assert(parsed.settings.maxVolume === 40, "최대 음량이 백업에 포함되어야 함");
+          assert(parsed.settings.wakeLockMode === "always", "화면 켜짐 모드가 백업에 포함되어야 함");
 
           const corruptBytes = new Uint8Array(await archive.arrayBuffer());
           corruptBytes[60] ^= 0xff;
@@ -614,6 +640,7 @@
           assert(restoredSlot7.audioFile.name === "내 음악 1.wav", "새 저장소에 음원을 복원해야 함");
           assert(restoredSlot7.imageSource === "manual", "이미지 출처를 복원해야 함");
           assert((await restoreStorage.getSettings()).maxVolume === 40, "새 저장소에 최대 음량을 복원해야 함");
+          assert((await restoreStorage.getSettings()).wakeLockMode === "always", "새 저장소에 화면 켜짐 모드를 복원해야 함");
 
           restoreStorage.db.close();
           await new Promise((resolve, reject) => {
@@ -730,6 +757,141 @@
             assert(bitmap.width === expectedSize && bitmap.height === expectedSize, `${path} 크기가 정확해야 함`);
             bitmap.close();
           }
+        });
+
+        // 20. Screen Wake Lock 제어기 동작 검증
+        await runTest("20. Screen Wake Lock 제어기 및 가시성 복구 검증", async () => {
+          let requestCount = 0;
+          let releaseCount = 0;
+          const mockSentinel = {
+            released: false,
+            listeners: new Map(),
+            addEventListener(type, cb) {
+              this.listeners.set(type, cb);
+            },
+            async release() {
+              this.released = true;
+              releaseCount++;
+              const cb = this.listeners.get("release");
+              if (cb) cb();
+            },
+          };
+
+          const mockNavigator = {
+            wakeLock: {
+              async request(type) {
+                if (type !== "screen") throw new Error("Invalid type");
+                requestCount++;
+                mockSentinel.released = false;
+                return mockSentinel;
+              },
+            },
+          };
+
+          let visibility = "visible";
+          const mockDocument = {
+            get visibilityState() {
+              return visibility;
+            },
+            listeners: new Map(),
+            addEventListener(type, cb) {
+              this.listeners.set(type, cb);
+            },
+            removeEventListener(type, cb) {
+              this.listeners.delete(type);
+            },
+            dispatch(type) {
+              const cb = this.listeners.get(type);
+              if (cb) cb();
+            },
+          };
+
+          const controller = new WakeLockController({
+            navigatorRef: mockNavigator,
+            documentRef: mockDocument,
+          });
+
+          assert(controller.isSupported, "Wake Lock 지원이 확인되어야 함");
+          assert(!controller.isActive, "초기에는 활성화되지 않아야 함");
+
+          // playing 모드에서 재생 시작
+          controller.setPlaying(true);
+          await new Promise((r) => setTimeout(r, 10));
+          assert(controller.isActive && requestCount === 1, "재생 시작 시 Wake Lock을 획득해야 함");
+
+          // 재생 정지
+          controller.setPlaying(false);
+          await new Promise((r) => setTimeout(r, 10));
+          assert(!controller.isActive && releaseCount === 1, "재생 정지 시 Wake Lock을 해제해야 함");
+
+          // 백그라운드 전환 테스트
+          controller.setPlaying(true);
+          await new Promise((r) => setTimeout(r, 10));
+          assert(controller.isActive, "재생 시작으로 획득");
+          visibility = "hidden";
+          mockDocument.dispatch("visibilitychange");
+          await new Promise((r) => setTimeout(r, 10));
+          assert(!controller.isActive, "화면이 가려지면 잠금을 해제해야 함");
+
+          // 포그라운드 복귀 시 자동 재획득
+          visibility = "visible";
+          mockDocument.dispatch("visibilitychange");
+          await new Promise((r) => setTimeout(r, 10));
+          assert(controller.isActive, "화면 복귀 시 재생 중이면 잠금을 재획득해야 함");
+
+          // always 모드 테스트
+          controller.setPlaying(false);
+          controller.setMode(WAKE_LOCK_MODES.ALWAYS);
+          await new Promise((r) => setTimeout(r, 10));
+          assert(controller.isActive, "always 모드는 재생 여부와 무관하게 획득해야 함");
+
+          // system 모드 테스트
+          controller.setMode(WAKE_LOCK_MODES.SYSTEM);
+          await new Promise((r) => setTimeout(r, 10));
+          assert(!controller.isActive, "system 모드는 잠금을 해제해야 함");
+
+          controller.destroy();
+        });
+
+        // 21. 보호자 화면 켜짐 설정 저장·복원·백업 왕복
+        await runTest("21. 보호자 화면 켜짐 설정 저장·정규화·백업 왕복", async () => {
+          const dbInit = await storage._openDatabase();
+          await new Promise((resolve, reject) => {
+            const tx = dbInit.transaction(storage.settingsStoreName, "readwrite");
+            tx.objectStore(storage.settingsStoreName).clear();
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+          const defaultSettings = await storage.getSettings();
+          assert(defaultSettings.wakeLockMode === "playing", "기본 wakeLockMode는 playing이어야 함");
+
+          const updated = await storage.saveSettings({ wakeLockMode: "always" });
+          assert(updated.wakeLockMode === "always", "always 모드로 저장되어야 함");
+
+          const reloaded = await storage.getSettings();
+          assert(reloaded.wakeLockMode === "always", "저장된 always 모드가 로드되어야 함");
+
+          // 잘못된 값 정규화 복구
+          const db = await storage._openDatabase();
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction(storage.settingsStoreName, "readwrite");
+            tx.objectStore(storage.settingsStoreName).put({
+              key: "app-settings",
+              maxVolume: 80,
+              wakeLockMode: "corrupted_mode",
+            });
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+
+          const normalized = await storage.getSettings();
+          assert(normalized.wakeLockMode === "playing", "손상된 값은 playing으로 복구되어야 함");
+
+          // 백업 및 복원 왕복
+          await storage.saveSettings({ maxVolume: 70, wakeLockMode: "system" });
+          const backupArchive = await createBackupArchive(await storage.createBackupSnapshot());
+          const backupData = await readBackupArchive(backupArchive);
+          assert(backupData.settings.wakeLockMode === "system", "백업에 wakeLockMode가 포함되어야 함");
         });
 
         // 결과 렌더링

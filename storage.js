@@ -1,4 +1,5 @@
 import { normalizeMaxVolume } from "./volume.js";
+import { normalizeWakeLockMode, WAKE_LOCK_MODES } from "./wake-lock.js";
 
 /**
  * JukeboxStorage - IndexedDB(메타데이터) + OPFS(바이너리) 영구 저장 계층
@@ -915,6 +916,7 @@ export class JukeboxStorage {
         tx.objectStore(this.settingsStoreName).put({
           key: "app-settings",
           maxVolume: normalizeMaxVolume(settings?.maxVolume),
+          wakeLockMode: normalizeWakeLockMode(settings?.wakeLockMode),
           updatedAt: Date.now(),
         });
         const statsStore = tx.objectStore(this.statsStoreName);
@@ -947,18 +949,25 @@ export class JukeboxStorage {
   async getSettings() {
     await this.init();
     const stored = await this._getSettingsFromDb();
-    return { maxVolume: normalizeMaxVolume(stored?.maxVolume) };
+    return {
+      maxVolume: normalizeMaxVolume(stored?.maxVolume),
+      wakeLockMode: normalizeWakeLockMode(stored?.wakeLockMode),
+    };
   }
 
-  async saveSettings({ maxVolume }) {
+  async saveSettings({ maxVolume, wakeLockMode } = {}) {
     await this.init();
-    const normalized = normalizeMaxVolume(maxVolume);
+    const current = await this.getSettings();
+    const normalizedVolume = maxVolume !== undefined ? normalizeMaxVolume(maxVolume) : current.maxVolume;
+    const normalizedWakeLock =
+      wakeLockMode !== undefined ? normalizeWakeLockMode(wakeLockMode) : current.wakeLockMode;
     await this._putSettingsToDb({
       key: "app-settings",
-      maxVolume: normalized,
+      maxVolume: normalizedVolume,
+      wakeLockMode: normalizedWakeLock,
       updatedAt: Date.now(),
     });
-    return { maxVolume: normalized };
+    return { maxVolume: normalizedVolume, wakeLockMode: normalizedWakeLock };
   }
 
   /**

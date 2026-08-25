@@ -4,6 +4,7 @@ import { extractEmbeddedArtwork } from "./album-art.js";
 import { applyVolumeLimit } from "./volume.js";
 import { createBackupArchive, readBackupArchive } from "./backup.js";
 import { ActivationGuard, PointerGestureTracker } from "./interaction.js";
+import { WakeLockController, WAKE_LOCK_MODES, normalizeWakeLockMode } from "./wake-lock.js";
 
 const SLOT_COUNT = 9;
 const HOLD_DURATION_MS = 2000;
@@ -38,6 +39,7 @@ const playback = {
 const savingSlots = new Set();
 const activationGuard = new ActivationGuard(700);
 const pointerGesture = new PointerGestureTracker(24);
+const wakeLockController = new WakeLockController();
 
 const grid = document.querySelector("#jukeboxGrid");
 const slotEditors = document.querySelector("#slotEditors");
@@ -50,6 +52,8 @@ const settingsFeedback = document.querySelector("#settingsFeedback");
 const liveRegion = document.querySelector("#liveRegion");
 const maxVolumeRange = document.querySelector("#maxVolumeRange");
 const maxVolumeValue = document.querySelector("#maxVolumeValue");
+const wakeLockRadios = document.querySelectorAll('input[name="wakeLockMode"]');
+const updateAppCacheButton = document.querySelector("#updateAppCache");
 const exportBackupButton = document.querySelector("#exportBackup");
 const importBackupInput = document.querySelector("#importBackup");
 const importBackupLabel = importBackupInput.closest(".backup-import");
@@ -62,6 +66,8 @@ let toastTimer = null;
 let errorTimer = null;
 let maxVolume = 100;
 let persistedMaxVolume = 100;
+let wakeLockMode = WAKE_LOCK_MODES.PLAYING;
+let persistedWakeLockMode = WAKE_LOCK_MODES.PLAYING;
 let settingsSaving = false;
 let maintenanceBusy = false;
 let maintenanceAction = "";
@@ -183,6 +189,69 @@ async function persistMaxVolume() {
   }
 }
 
+function applyWakeLockMode(value) {
+  wakeLockMode = normalizeWakeLockMode(value);
+  wakeLockController.setMode(wakeLockMode);
+  wakeLockRadios.forEach((radio) => {
+    radio.checked = radio.value === wakeLockMode;
+  });
+}
+
+async function persistWakeLockMode(value) {
+  const normalized = normalizeWakeLockMode(value);
+  applyWakeLockMode(normalized);
+  settingsSaving = true;
+  renderSettings();
+  try {
+    const saved = await storage.saveSettings({ wakeLockMode: normalized });
+    persistedWakeLockMode = saved.wakeLockMode;
+    applyWakeLockMode(saved.wakeLockMode);
+    announce("화면 켜짐 유지 설정을 저장했습니다.");
+  } catch (error) {
+    console.error("화면 켜짐 유지 설정 저장 실패:", error);
+    applyWakeLockMode(persistedWakeLockMode);
+    showToast("화면 켜짐 설정을 저장하지 못했습니다. 다시 시도해 주세요.");
+  } finally {
+    settingsSaving = false;
+    renderSettings();
+  }
+}
+
+async function updateAppCache() {
+  if (maintenanceBusy || settingsSaving || savingSlots.size > 0) return;
+  maintenanceBusy = true;
+  maintenanceAction = "update-cache";
+  renderSettings();
+  showToast("최신 앱 버전을 확인하고 있습니다...");
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) {
+        await reg.update();
+      }
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    showToast("최신 버전으로 갱신되었습니다. 새로고침합니다.");
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 800);
+  } catch (error) {
+    console.error("앱 캐시 갱신 실패:", error);
+    showToast("캐시 갱신 중 오류가 발생했습니다. 새로고침합니다.");
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 1000);
+  } finally {
+    maintenanceBusy = false;
+    maintenanceAction = "";
+    renderSettings();
+  }
+}
+
 function renderJukebox() {
   const fragment = document.createDocumentFragment();
 
@@ -247,6 +316,15 @@ function renderSettings() {
   maxVolumeRange.disabled = settingsSaving || maintenanceBusy;
   maxVolumeValue.value = `${maxVolume}%`;
   maxVolumeValue.textContent = `${maxVolume}%`;
+  wakeLockRadios.forEach((radio) => {
+    radio.checked = radio.value === wakeLockMode;
+    radio.disabled = settingsSaving || maintenanceBusy;
+  });
+  if (updateAppCacheButton) {
+    updateAppCacheButton.disabled = maintenanceBusy || settingsSaving || savingSlots.size > 0;
+    updateAppCacheButton.textContent =
+      maintenanceBusy && maintenanceAction === "update-cache" ? "업데이트 적용 중…" : "최신 버전으로 업데이트";
+  }
   exportBackupButton.disabled = maintenanceBusy || settingsSaving || savingSlots.size > 0;
   exportBackupButton.textContent = maintenanceBusy && maintenanceAction === "export" ? "백업 만드는 중…" : "전체 백업 저장";
   importBackupInput.disabled = maintenanceBusy || settingsSaving || savingSlots.size > 0;
@@ -561,6 +639,7 @@ async function playSlot(slotId, { resume = false } = {}) {
     if (requestId !== playback.requestId) return;
 
     playback.status = "playing";
+    wakeLockController.setPlaying(true);
     beginListening(slot, { countSelection: !resume });
     setMediaPlaybackState("playing");
     renderJukebox();
@@ -569,6 +648,7 @@ async function playSlot(slotId, { resume = false } = {}) {
     if (requestId !== playback.requestId || error?.name === "AbortError") return;
 
     playback.status = "error";
+    wakeLockController.setPlaying(false);
     playback.errorSlotId = slot.id;
     playback.activeSlotId = null;
     setMediaPlaybackState("none");
@@ -586,6 +666,7 @@ async function playSlot(slotId, { resume = false } = {}) {
 
 function stopPlayback({ announceStop = true, skipStatsFlush = false } = {}) {
   playback.requestId += 1;
+  wakeLockController.setPlaying(false);
   if (!skipStatsFlush) flushListening();
   audio.pause();
   try {
@@ -609,6 +690,7 @@ function stopPlayback({ announceStop = true, skipStatsFlush = false } = {}) {
 function pauseFromSystem() {
   if (!playback.activeSlotId || audio.paused) return;
   playback.requestId += 1;
+  wakeLockController.setPlaying(false);
   flushListening();
   audio.pause();
   playback.status = "paused";
@@ -886,6 +968,8 @@ async function loadPersistedSlots() {
     ]);
     persistedMaxVolume = persistedSettings.maxVolume;
     applyMaxVolume(persistedSettings.maxVolume);
+    persistedWakeLockMode = persistedSettings.wakeLockMode;
+    applyWakeLockMode(persistedSettings.wakeLockMode);
     playbackStats.clear();
     persistedStats.forEach((record) => playbackStats.set(record.trackId, record));
 
@@ -992,6 +1076,14 @@ slotEditors.addEventListener("click", (event) => {
 
 maxVolumeRange.addEventListener("input", () => applyMaxVolume(maxVolumeRange.value));
 maxVolumeRange.addEventListener("change", persistMaxVolume);
+wakeLockRadios.forEach((radio) => {
+  radio.addEventListener("change", () => {
+    if (radio.checked) persistWakeLockMode(radio.value);
+  });
+});
+if (updateAppCacheButton) {
+  updateAppCacheButton.addEventListener("click", updateAppCache);
+}
 exportBackupButton.addEventListener("click", exportBackup);
 importBackupInput.addEventListener("change", () => {
   const [file] = importBackupInput.files;
@@ -1034,6 +1126,7 @@ audio.addEventListener("error", () => {
   flushListening();
   const failedSlotId = playback.activeSlotId;
   playback.status = "error";
+  wakeLockController.setPlaying(false);
   playback.activeSlotId = null;
   playback.errorSlotId = failedSlotId;
   setMediaPlaybackState("none");

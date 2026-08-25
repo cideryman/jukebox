@@ -75,6 +75,29 @@
             </p>
           </section>
 
+          <section class="wake-lock-panel" aria-labelledby="wakeLockLabel">
+            <div class="wake-lock-heading">
+              <span id="wakeLockLabel" class="wake-lock-title">화면 켜짐 유지</span>
+            </div>
+            <div class="wake-lock-options" role="radiogroup" aria-labelledby="wakeLockLabel">
+              <label class="wake-lock-option">
+                <input type="radio" name="wakeLockMode" value="playing" checked />
+                <span>음악 재생 중 (기본값)</span>
+              </label>
+              <label class="wake-lock-option">
+                <input type="radio" name="wakeLockMode" value="always" />
+                <span>항상 켜짐</span>
+              </label>
+              <label class="wake-lock-option">
+                <input type="radio" name="wakeLockMode" value="system" />
+                <span>기기 기본값</span>
+              </label>
+            </div>
+            <p id="wakeLockHelp" class="settings-hint">
+              음악이 재생되는 동안 태블릿 화면이 어두워지거나 꺼지지 않게 유지합니다.
+            </p>
+          </section>
+
           <section class="backup-panel" aria-labelledby="backupTitle">
             <div>
               <h2 id="backupTitle">전체 백업과 복원</h2>
@@ -122,6 +145,16 @@
               </svg>
               <span>이 기기의 로컬 저장소(IndexedDB + OPFS)에 보관됩니다. 브라우저 데이터나 캐시를 삭제하면 등록된 파일도 함께 삭제될 수 있습니다.</span>
             </p>
+          </section>
+
+          <section class="app-update-panel" aria-labelledby="appUpdateTitle">
+            <div>
+              <h2 id="appUpdateTitle">앱 버전 및 캐시 갱신</h2>
+              <p>음악·사진·설정 데이터를 안전하게 유지한 채 최신 앱 버전으로 새로고침합니다.</p>
+            </div>
+            <div class="app-update-actions">
+              <button id="updateAppCache" type="button" class="update-cache-button">최신 버전으로 업데이트</button>
+            </div>
           </section>
 
           <section class="stats-panel" aria-labelledby="statsTitle">

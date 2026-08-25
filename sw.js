@@ -1,4 +1,4 @@
-const CACHE_NAME = "jukebox-shell-v14";
+const CACHE_NAME = "jukebox-shell-v15";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -10,6 +10,7 @@ const APP_SHELL = [
   "./interaction.js",
   "./storage.js",
   "./volume.js",
+  "./wake-lock.js",
   "./manifest.webmanifest",
   "./assets/icon.svg",
   "./assets/icon-192.png",

@@ -222,7 +222,10 @@ export async function createBackupArchive({ slots, settings, stats = [] }) {
     format: "jukebox-backup",
     formatVersion: 1,
     createdAt: createdAt.toISOString(),
-    appSettings: { maxVolume: settings?.maxVolume ?? 100 },
+    appSettings: {
+      maxVolume: settings?.maxVolume ?? 100,
+      wakeLockMode: settings?.wakeLockMode ?? "playing",
+    },
     slots: manifestSlots,
     stats: backupStats,
   };
@@ -368,7 +371,10 @@ export async function readBackupArchive(file) {
   return {
     createdAt: manifest.createdAt,
     slots,
-    settings: manifest.appSettings || { maxVolume: 100 },
+    settings: {
+      maxVolume: manifest.appSettings?.maxVolume ?? 100,
+      wakeLockMode: manifest.appSettings?.wakeLockMode ?? "playing",
+    },
     stats: manifest.stats.map((stat) => ({
       trackId: stat.trackId,
       slotId: Number(stat.slotId),

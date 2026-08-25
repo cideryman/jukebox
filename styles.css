@@ -389,6 +389,118 @@ button {
   line-height: 1.45;
 }
 
+.wake-lock-panel {
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--jukebox-line);
+  border-radius: 18px;
+  background: var(--jukebox-panel-raised);
+}
+
+.wake-lock-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.wake-lock-title {
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.wake-lock-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.wake-lock-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--jukebox-line);
+  border-radius: 12px;
+  background: #202e46;
+  color: var(--jukebox-text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.wake-lock-option:has(input:checked) {
+  border-color: var(--jukebox-accent);
+  background: rgba(88, 230, 210, 0.12);
+  color: #ffffff;
+}
+
+.wake-lock-option input {
+  accent-color: var(--jukebox-accent);
+  margin: 0;
+  cursor: pointer;
+}
+
+.wake-lock-panel .settings-hint {
+  margin: 6px 0 0;
+  color: var(--jukebox-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.app-update-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--jukebox-line);
+  border-radius: 18px;
+  background: var(--jukebox-panel-raised);
+}
+
+.app-update-panel h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.app-update-panel p {
+  margin: 5px 0 0;
+  color: var(--jukebox-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.app-update-actions {
+  display: flex;
+}
+
+.update-cache-button {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 16px;
+  border: 1px solid var(--jukebox-line);
+  border-radius: 13px;
+  background: #202e46;
+  color: var(--jukebox-text);
+  font-size: 0.88rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.update-cache-button:hover:not(:disabled) {
+  background: #283a58;
+  border-color: var(--jukebox-accent);
+}
+
+.update-cache-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .backup-panel {
   display: grid;
   gap: 14px;
