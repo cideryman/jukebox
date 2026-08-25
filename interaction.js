@@ -22,7 +22,7 @@ export class ActivationGuard {
 }
 
 export class PointerGestureTracker {
-  constructor(maxMovementPx = 24) {
+  constructor(maxMovementPx = 64) {
     this.maxMovementPx = maxMovementPx;
     this.active = null;
   }

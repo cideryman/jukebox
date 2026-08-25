@@ -38,7 +38,7 @@ const playback = {
 // 진행 중인 저장 작업을 추적하여 빠른 연속 등록/재생 경쟁 상태 방지
 const savingSlots = new Set();
 const activationGuard = new ActivationGuard(700);
-const pointerGesture = new PointerGestureTracker(24);
+const pointerGesture = new PointerGestureTracker(64);
 const wakeLockController = new WakeLockController();
 
 const grid = document.querySelector("#jukeboxGrid");
