@@ -261,6 +261,78 @@ button {
   backdrop-filter: blur(10px);
 }
 
+.confirm-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--jukebox-line);
+  border-radius: 20px;
+  background: var(--jukebox-panel);
+  color: var(--jukebox-text);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+}
+
+.confirm-dialog::backdrop {
+  background: rgba(2, 7, 14, 0.82);
+  backdrop-filter: blur(4px);
+}
+
+.confirm-frame {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--jukebox-warning);
+}
+
+.confirm-message {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: var(--jukebox-text);
+  word-break: keep-all;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.confirm-button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.confirm-button:active {
+  opacity: 0.8;
+}
+
+.confirm-button.cancel-button {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--jukebox-text);
+}
+
+.confirm-button.ok-button {
+  background: var(--jukebox-danger);
+  color: #07141c;
+}
+
+.confirm-button:focus-visible {
+  outline: 3px solid var(--jukebox-accent);
+  outline-offset: 3px;
+}
+
 .settings-frame {
   height: 100%;
   display: grid;

@@ -209,8 +209,6 @@ function applyCurrentScreen(value) {
 
 async function persistCurrentScreen(value) {
   const normalized = normalizeScreenId(value);
-  applyCurrentScreen(normalized);
-  renderAll();
   settingsSaving = true;
   renderSettings();
   try {
@@ -250,19 +248,26 @@ async function persistWakeLockMode(value) {
 
 async function updateAppCache() {
   if (maintenanceBusy || settingsSaving || savingSlots.size > 0) return;
+  if (!navigator.onLine) {
+    showToast("오프라인 상태입니다. 네트워크 연결을 확인해 주세요.");
+    return;
+  }
+  
   maintenanceBusy = true;
   maintenanceAction = "update-cache";
   renderSettings();
   showToast("최신 앱 버전을 확인하고 있습니다...");
 
   try {
+    let updated = false;
     if ("serviceWorker" in navigator) {
       const reg = await navigator.serviceWorker.getRegistration();
       if (reg) {
         await reg.update();
+        updated = true;
       }
     }
-    if ("caches" in window) {
+    if ("caches" in window && updated) {
       const keys = await caches.keys();
       await Promise.all(keys.map((key) => caches.delete(key)));
     }
@@ -547,13 +552,14 @@ async function exportBackup() {
 
 async function importBackup(file) {
   if (!file || maintenanceBusy || savingSlots.size > 0 || settingsSaving) return;
-  startMaintenance("import");
+  startMaintenance("import-backup");
   try {
     const snapshot = await readBackupArchive(file);
     const musicCount = snapshot.slots.filter((slot) => slot.audioFile).length;
     const createdDate = new Date(snapshot.createdAt);
     const dateLabel = Number.isNaN(createdDate.getTime()) ? "날짜 정보 없음" : createdDate.toLocaleString("ko-KR");
-    const shouldRestore = window.confirm(
+    
+    const shouldRestore = await showConfirm(
       `백업 날짜: ${dateLabel}\n음악: ${musicCount}개\n파일 크기: ${formatBytes(file.size)}\n\n현재 주크박스를 이 백업으로 교체할까요?`,
     );
     if (!shouldRestore) return;
@@ -626,7 +632,7 @@ function flushListening({ completed = false, continueSession = false } = {}) {
 
 async function clearStatsForTrack(trackId, slotId) {
   if (!trackId || maintenanceBusy) return;
-  if (!window.confirm(`${slotId}번 음악의 재생 기록을 초기화할까요?`)) return;
+  if (!(await showConfirm(`${slotId}번 음악의 재생 기록을 초기화할까요?`))) return;
   try {
     await storage.clearPlaybackStats(trackId);
     if (listeningSession?.trackId === trackId) listeningSession.startedAt = performance.now();
@@ -641,7 +647,7 @@ async function clearStatsForTrack(trackId, slotId) {
 
 async function clearAllStats() {
   if (maintenanceBusy || playbackStats.size === 0) return;
-  if (!window.confirm("모든 음악의 재생 기록을 초기화할까요?")) return;
+  if (!(await showConfirm("모든 음악의 재생 기록을 초기화할까요?"))) return;
   try {
     await storage.clearPlaybackStats();
     if (listeningSession) listeningSession.startedAt = performance.now();
@@ -837,7 +843,7 @@ async function clearSlot(slotId) {
   const hasAny = Boolean(slot && (slot.audioFile || slot.imageFile || slot.audioFileName || slot.imageFileName));
   if (!slot || !hasAny) return;
 
-  if (!window.confirm(`${slot.id}번 칸의 음악과 사진을 모두 지울까요?`)) return;
+  if (!(await showConfirm(`${slot.id}번 칸의 음악과 사진을 모두 지울까요?`))) return;
   if (playback.activeSlotId === slot.id) stopPlayback({ announceStop: false });
 
   // 슬롯 잠금 (경쟁 상태 방지)
@@ -977,6 +983,45 @@ function showToast(message) {
     toast.hidden = true;
     if (settingsFeedback) settingsFeedback.hidden = true;
   }, 3200);
+}
+
+function showConfirm(message) {
+  return new Promise((resolve) => {
+    const dialog = document.getElementById("confirmDialog");
+    const messageEl = document.getElementById("confirmMessage");
+    const okBtn = document.getElementById("confirmOk");
+    const cancelBtn = document.getElementById("confirmCancel");
+    if (!dialog || !messageEl || !okBtn || !cancelBtn) {
+      resolve(window.confirm(message));
+      return;
+    }
+
+    messageEl.textContent = message;
+
+    const cleanup = () => {
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onCancel);
+      dialog.close();
+    };
+
+    const onOk = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const onCancel = (e) => {
+      e.preventDefault();
+      cleanup();
+      resolve(false);
+    };
+
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onCancel);
+
+    dialog.showModal();
+  });
 }
 
 function announce(message) {

@@ -203,6 +203,17 @@
       </div>
     </dialog>
 
+    <dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmTitle">
+      <div class="confirm-frame">
+        <h2 id="confirmTitle" class="confirm-title">확인</h2>
+        <p id="confirmMessage" class="confirm-message"></p>
+        <div class="confirm-actions">
+          <button id="confirmCancel" class="confirm-button cancel-button" type="button">취소</button>
+          <button id="confirmOk" class="confirm-button ok-button" type="button">확인</button>
+        </div>
+      </div>
+    </dialog>
+
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     <div id="liveRegion" class="sr-only" aria-live="polite"></div>
     <audio id="audioPlayer" preload="metadata"></audio>

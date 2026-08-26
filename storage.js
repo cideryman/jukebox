@@ -741,12 +741,16 @@ export class JukeboxStorage {
       // 1. IDB 메타 삭제
       await this._deleteMetaFromDb(slotId);
 
-      // 2. OPFS 파일 삭제
-      if (existingMeta.audioPath) {
-        await this._deleteFileFromOpfs(existingMeta.audioPath);
-      }
-      if (existingMeta.imagePath) {
-        await this._deleteFileFromOpfs(existingMeta.imagePath);
+      // 2. OPFS 파일 삭제 (실패해도 IDB 메타는 이미 지워졌으므로 에러를 던지지 않음)
+      try {
+        if (existingMeta.audioPath) {
+          await this._deleteFileFromOpfs(existingMeta.audioPath);
+        }
+        if (existingMeta.imagePath) {
+          await this._deleteFileFromOpfs(existingMeta.imagePath);
+        }
+      } catch (error) {
+        console.warn("슬롯 삭제 후 OPFS 파일 정리 실패 (고아 파일로 남음):", error);
       }
       if (existingMeta.trackId) {
         await this.clearPlaybackStats(existingMeta.trackId).catch((error) => {

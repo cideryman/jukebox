@@ -122,7 +122,7 @@ function validateArchivePath(path) {
 }
 
 function validateManifest(manifest, entries) {
-  if (!manifest || manifest.format !== "jukebox-backup" || manifest.formatVersion !== 1) {
+  if (!manifest || manifest.format !== "jukebox-backup" || typeof manifest.formatVersion !== "number" || manifest.formatVersion < 1) {
     throw new Error("지원하지 않는 주크박스 백업 형식입니다.");
   }
   if (!Array.isArray(manifest.slots) || manifest.slots.length > 27) {
@@ -151,10 +151,11 @@ function validateManifest(manifest, entries) {
     }
   }
 
-  if (!Array.isArray(manifest.stats) || manifest.stats.length > 27) {
+  const stats = manifest.stats ?? [];
+  if (!Array.isArray(stats) || stats.length > 27) {
     throw new Error("백업의 재생 통계가 올바르지 않습니다.");
   }
-  for (const stat of manifest.stats) {
+  for (const stat of stats) {
     const validCounters = [stat?.selectionCount, stat?.completedCount, stat?.listenedMs].every(
       (value) => Number.isSafeInteger(value) && value >= 0,
     );
@@ -377,7 +378,7 @@ export async function readBackupArchive(file) {
       wakeLockMode: manifest.appSettings?.wakeLockMode ?? "playing",
       currentScreen: manifest.appSettings?.currentScreen ?? 1,
     },
-    stats: manifest.stats.map((stat) => ({
+    stats: (manifest.stats ?? []).map((stat) => ({
       trackId: stat.trackId,
       slotId: Number(stat.slotId),
       selectionCount: Number(stat.selectionCount),
