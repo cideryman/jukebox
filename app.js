@@ -62,6 +62,15 @@ const importBackupLabel = importBackupInput.closest(".backup-import");
 const playbackStatsList = document.querySelector("#playbackStatsList");
 const clearAllStatsButton = document.querySelector("#clearAllStats");
 
+// Tabs
+const tabSettings = document.querySelector("#tabSettings");
+const tabStats = document.querySelector("#tabStats");
+const panelSettings = document.querySelector("#panelSettings");
+const panelStats = document.querySelector("#panelStats");
+const statsChartContainer = document.querySelector("#statsChartContainer");
+const statsDonutChart = document.querySelector("#statsDonutChart");
+const statsDonutLegend = document.querySelector("#statsDonutLegend");
+
 let holdTimer = null;
 let holdOpened = false;
 let toastTimer = null;
@@ -108,7 +117,15 @@ function renderPlaybackStats() {
     empty.className = "stats-empty";
     empty.textContent = "음악을 등록하면 선택 기록이 여기에 표시됩니다.";
     fragment.append(empty);
+    statsChartContainer.hidden = true;
+    playbackStatsList.replaceChildren(fragment);
+    return;
   }
+
+  // --- 통계 데이터 계산 (차트용) ---
+  let totalSelections = 0;
+  const chartData = [];
+  const palette = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#F9CA24", "#6AB04C", "#A3CB38"];
 
   for (const slot of audioSlots) {
     const stat = playbackStats.get(slot.trackId) || {
@@ -117,6 +134,17 @@ function renderPlaybackStats() {
       listenedMs: 0,
       lastPlayedAt: 0,
     };
+    
+    // 조각 렌더링용 데이터 수집
+    if (stat.selectionCount > 0) {
+      chartData.push({
+        slotId: slot.id,
+        label: slot.label || "음악",
+        count: stat.selectionCount,
+      });
+      totalSelections += stat.selectionCount;
+    }
+
     const row = document.createElement("article");
     row.className = "stats-row";
 
@@ -154,6 +182,55 @@ function renderPlaybackStats() {
     fragment.append(row);
   }
   playbackStatsList.replaceChildren(fragment);
+
+  // --- 도넛 차트 렌더링 ---
+  if (totalSelections === 0) {
+    statsChartContainer.hidden = true;
+    return;
+  }
+  
+  statsChartContainer.hidden = false;
+  chartData.sort((a, b) => b.count - a.count);
+  
+  // 상위 5곡 + 기타
+  const topData = chartData.slice(0, 5);
+  const othersCount = chartData.slice(5).reduce((sum, item) => sum + item.count, 0);
+  if (othersCount > 0) {
+    topData.push({ slotId: "etc", label: "기타", count: othersCount });
+  }
+
+  let conicString = "";
+  let currentPercentage = 0;
+  const legendFragment = document.createDocumentFragment();
+
+  topData.forEach((item, index) => {
+    const percentage = (item.count / totalSelections) * 100;
+    const color = item.slotId === "etc" ? "#95A5A6" : palette[index % palette.length];
+    
+    // background: conic-gradient(red 0% 30%, blue 30% 100%)
+    conicString += `${color} ${currentPercentage}% ${currentPercentage + percentage}%, `;
+    currentPercentage += percentage;
+
+    // Legend item
+    const li = document.createElement("li");
+    const colorBox = document.createElement("div");
+    colorBox.className = "donut-legend-color";
+    colorBox.style.backgroundColor = color;
+    
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "donut-legend-label";
+    labelSpan.textContent = item.slotId === "etc" ? "기타" : `${item.slotId}번 ${item.label}`;
+    
+    const valueSpan = document.createElement("span");
+    valueSpan.className = "donut-legend-value";
+    valueSpan.textContent = `${Math.round(percentage)}%`;
+
+    li.append(colorBox, labelSpan, valueSpan);
+    legendFragment.append(li);
+  });
+
+  statsDonutChart.style.background = `conic-gradient(${conicString.slice(0, -2)})`;
+  statsDonutLegend.replaceChildren(legendFragment);
 }
 
 function isSlotReady(slot) {
@@ -957,6 +1034,7 @@ function cancelSettingsHold(event) {
 }
 
 function openSettings() {
+  switchTab("tabSettings");
   if (settingsFeedback) settingsFeedback.hidden = true;
   renderSettings();
   updateStorageInfo();
@@ -1188,6 +1266,24 @@ playbackStatsList.addEventListener("click", (event) => {
   if (button) clearStatsForTrack(button.dataset.trackId, Number(button.dataset.slotId));
 });
 clearAllStatsButton.addEventListener("click", clearAllStats);
+
+// --- Tab Switching Logic ---
+function switchTab(tabId) {
+  const isSettings = tabId === "tabSettings";
+  
+  tabSettings.setAttribute("aria-selected", isSettings);
+  tabStats.setAttribute("aria-selected", !isSettings);
+  
+  panelSettings.hidden = !isSettings;
+  panelStats.hidden = isSettings;
+
+  if (!isSettings) {
+    renderPlaybackStats();
+  }
+}
+
+tabSettings.addEventListener("click", () => switchTab("tabSettings"));
+tabStats.addEventListener("click", () => switchTab("tabStats"));
 
 settingsTrigger.addEventListener("pointerdown", startSettingsHold);
 settingsTrigger.addEventListener("pointerup", cancelSettingsHold);
