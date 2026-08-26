@@ -3,7 +3,7 @@ import { normalizeFileForKind } from "./file-types.js";
 import { extractEmbeddedArtwork } from "./album-art.js";
 import { applyVolumeLimit } from "./volume.js";
 import { createBackupArchive, readBackupArchive } from "./backup.js";
-import { ActivationGuard, PointerGestureTracker } from "./interaction.js";
+import { ActivationGuard, PointerGestureTracker, TwoFingerSwipeTracker } from "./interaction.js";
 import { WakeLockController, WAKE_LOCK_MODES, normalizeWakeLockMode } from "./wake-lock.js";
 
 const SLOT_COUNT = 27;
@@ -39,6 +39,7 @@ const playback = {
 const savingSlots = new Set();
 const activationGuard = new ActivationGuard(700);
 const pointerGesture = new PointerGestureTracker(64);
+const swipeTracker = new TwoFingerSwipeTracker(80);
 const wakeLockController = new WakeLockController();
 
 const grid = document.querySelector("#jukeboxGrid");
@@ -216,6 +217,7 @@ async function persistCurrentScreen(value) {
     persistedCurrentScreen = saved.currentScreen;
     applyCurrentScreen(saved.currentScreen);
     announce(`화면 ${saved.currentScreen} 세트로 변경되었습니다.`);
+    showToast(`화면 ${saved.currentScreen} 세트로 변경되었습니다.`);
   } catch (error) {
     console.error("화면 세트 설정 저장 실패:", error);
     applyCurrentScreen(persistedCurrentScreen);
@@ -1230,6 +1232,42 @@ window.addEventListener("pagehide", () => flushListening());
 window.addEventListener("beforeunload", () => {
   flushListening();
   revokeAllObjectUrls();
+});
+
+function handleSwipe(direction) {
+  let newScreen = currentScreen;
+  if (direction === "right") {
+    newScreen = currentScreen - 1;
+    if (newScreen < 1) newScreen = 3;
+  } else if (direction === "left") {
+    newScreen = currentScreen + 1;
+    if (newScreen > 3) newScreen = 1;
+  }
+  if (newScreen !== currentScreen) {
+    persistCurrentScreen(newScreen);
+  }
+}
+
+document.body.addEventListener("touchstart", (event) => {
+  swipeTracker.handleTouchStart(event.touches);
+}, { passive: false });
+
+document.body.addEventListener("touchmove", (event) => {
+  if (event.touches.length > 1) {
+    event.preventDefault(); // 다중 터치 시 브라우저 동작 전면 차단
+  }
+  const direction = swipeTracker.handleTouchMove(event.touches);
+  if (direction) {
+    handleSwipe(direction);
+  }
+}, { passive: false });
+
+document.body.addEventListener("touchend", (event) => {
+  swipeTracker.handleTouchEnd(event.touches);
+});
+
+document.body.addEventListener("touchcancel", (event) => {
+  swipeTracker.handleTouchEnd(event.touches);
 });
 
 if ("serviceWorker" in navigator && window.isSecureContext) {

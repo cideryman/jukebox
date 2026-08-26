@@ -17,7 +17,7 @@
 - 1차 워크스루 커밋: `af6fb19`
 - Antigravity의 2차 자체 검토 변경과 Codex의 데이터 안전 수정은 현재 코드에 통합했다.
 - 기존 `WALKTHROUGH.md`는 `walkthrough/1.md`로 이동했으며, 후속 결과는 번호를 붙여 보관한다.
-- 데이터 안전 수정은 `walkthrough/3.md`, 모바일 파일 등록 수정은 `walkthrough/4.md`, 설정 종료 UI 변경은 `walkthrough/5.md`, 파일 내용 판별 보완은 `walkthrough/6.md`, 앨범아트·최대 음량 구현은 `walkthrough/7.md`, 백업 기능 우선순위 설계는 `walkthrough/8.md`, 반복·긴 입력 대응 설계는 `walkthrough/9.md`, 재생 통계 설계는 `walkthrough/10.md`, 우선순위 전체 구현 결과는 `walkthrough/11.md`, Screen Wake Lock 구현은 `walkthrough/step8.md`, 터치 감도 및 피드백 개선은 `walkthrough/step9.md`, 다중 화면 세트(화면 1, 2, 3) 관리는 `walkthrough/step10.md`, 커스텀 Confirm 창 및 앱 캐시 안전성 개선은 `walkthrough/step11.md`를 확인한다.
+- 데이터 안전 수정은 `walkthrough/3.md`, 모바일 파일 등록 수정은 `walkthrough/4.md`, 설정 종료 UI 변경은 `walkthrough/5.md`, 파일 내용 판별 보완은 `walkthrough/6.md`, 앨범아트·최대 음량 구현은 `walkthrough/7.md`, 백업 기능 우선순위 설계는 `walkthrough/8.md`, 반복·긴 입력 대응 설계는 `walkthrough/9.md`, 재생 통계 설계는 `walkthrough/10.md`, 우선순위 전체 구현 결과는 `walkthrough/11.md`, Screen Wake Lock 구현은 `walkthrough/step8.md`, 터치 감도 및 피드백 개선은 `walkthrough/step9.md`, 다중 화면 세트(화면 1, 2, 3) 관리는 `walkthrough/step10.md`, 커스텀 Confirm 창 및 앱 캐시 안전성 개선은 `walkthrough/step11.md`, 두 손가락 스와이프 화면 전환 구현은 `walkthrough/step12.md`를 확인한다.
 - 현재 22/22 통합 테스트 전체 통과 (ALL PASS).
 
 후속 작업자는 기존 변경을 초기화하거나 덮어쓰지 말고 현재 작업 트리부터 확인한다.

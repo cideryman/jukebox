@@ -60,3 +60,44 @@ export class PointerGestureTracker {
     return true;
   }
 }
+
+export class TwoFingerSwipeTracker {
+  constructor(thresholdPx = 80) {
+    this.thresholdPx = thresholdPx;
+    this.active = false;
+    this.startX = 0;
+    this.startY = 0;
+  }
+
+  handleTouchStart(touches) {
+    if (touches.length === 2) {
+      this.active = true;
+      this.startX = (touches[0].clientX + touches[1].clientX) / 2;
+      this.startY = (touches[0].clientY + touches[1].clientY) / 2;
+    } else {
+      this.active = false;
+    }
+  }
+
+  handleTouchMove(touches) {
+    if (!this.active || touches.length !== 2) return null;
+    const currentX = (touches[0].clientX + touches[1].clientX) / 2;
+    const currentY = (touches[0].clientY + touches[1].clientY) / 2;
+
+    const deltaX = currentX - this.startX;
+    const deltaY = currentY - this.startY;
+
+    // 수평 이동이 수직 이동보다 크고 임계값을 넘었는지 확인
+    if (Math.abs(deltaX) > this.thresholdPx && Math.abs(deltaX) > Math.abs(deltaY)) {
+      this.active = false; // 한 번 감지되면 초기화 (중복 트리거 방지)
+      return deltaX > 0 ? "right" : "left";
+    }
+    return null;
+  }
+
+  handleTouchEnd(touches) {
+    if (touches.length !== 2) {
+      this.active = false;
+    }
+  }
+}
